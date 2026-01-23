@@ -1,0 +1,29 @@
+{
+  "name": "imdb-search",
+  "version": "1.0.0",
+  "description": "영상 콘텐츠의 데이터와 사용자 평점을 제공하는 IMDb의 공개 데이터를 활용한 검색 시스템",
+  "main": "dist/index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "ts-node src/index.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f-lab-edu/imdb-search.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/f-lab-edu/imdb-search/issues"
+  },
+  "homepage": "https://github.com/f-lab-edu/imdb-search#readme",
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
