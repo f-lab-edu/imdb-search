@@ -8,7 +8,12 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+<<<<<<< HEAD
     "dev": "tsx src/index.ts"
+=======
+    "dev": "tsx src/index.ts",
+    "test-download": "tsx src/utils/download.test.ts"
+>>>>>>> 3896e82 (test: 데이터셋 다운로드 테스트 추가, ts-node tsx로 교체)
   },
   "repository": {
     "type": "git",
@@ -23,11 +28,14 @@
   },
   "homepage": "https://github.com/f-lab-edu/imdb-search#readme",
   "devDependencies": {
+<<<<<<< HEAD
+=======
+    "@types/axios": "^0.9.36",
+>>>>>>> 3896e82 (test: 데이터셋 다운로드 테스트 추가, ts-node tsx로 교체)
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@types/axios": "^0.9.36",
     "axios": "^1.13.2"
   }
 }
