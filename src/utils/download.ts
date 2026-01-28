@@ -19,7 +19,7 @@ export const downloadFile = async (dest: string, url: string) => {
   } catch (error) {
     writer.destroy();
 
-    if (axios.isAxiosError(eror)) {
+    if (axios.isAxiosError(error)) {
       console.error(`Axios error: ${error.message}`);
     } else {
       console.error(`Download error: ${(error as Error).message}`);
