@@ -5,6 +5,7 @@ const DB_CONFIG = {
     password: process.env.DB_PASSWORD || "",
     database: process.env.DB_NAME || "test",
     port: Number(process.env.DB_PORT) || 3306,
+    batchSize: Number(process.env.DB_BATCH_SIZE) || 1000,
   },
   redis: {
     socket: {
@@ -19,9 +20,8 @@ const DB_CONFIG = {
       password: process.env.OPENSEARCH_PASSWORD || "",
     },
 
-    // TODO: 개발 환경에서만
     ssl: {
-      rejectUnauthorized: false,
+      rejectUnauthorized: process.env.NODE_ENV === "production",
     },
   },
 };

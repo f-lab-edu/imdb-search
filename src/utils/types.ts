@@ -1,3 +1,13 @@
+export type TableName =
+  | "TITLES"
+  | "GENRES"
+  | "TITLE_GENRES"
+  | "RATINGS"
+  | "EPISODES"
+  | "PERSONS"
+  | "TITLE_PRINCIPALS"
+  | "TITLE_AKAS";
+
 export type DatasetType =
   | TitleBasics
   | TitleRatings
@@ -13,13 +23,13 @@ export type DatasetType =
  */
 export interface TitleBasics {
   tconst: string;
-  titleType: string;
-  primaryTitle: string;
-  originalTitle: string;
-  isAdult: string; // '0' or '1'
-  startYear: string | null;
-  endYear: string | null;
-  runtimeMinutes: string | null;
+  title_type: string;
+  primary_title: string;
+  original_title: string;
+  is_adult: string; // '0' or '1'
+  start_year: string | null;
+  end_year: string | null;
+  runtime_minutes: string | null;
   genres: string | null; // 'Action,Drama,Thriller' 형태
 }
 
@@ -29,8 +39,8 @@ export interface TitleBasics {
  */
 export interface TitleRatings {
   tconst: string;
-  averageRating: string;
-  numVotes: string;
+  average_rating: string;
+  num_votes: string;
 }
 
 /**
@@ -38,14 +48,14 @@ export interface TitleRatings {
  * 지역별 대체 제목
  */
 export interface TitleAkas {
-  titleId: string;
+  title_id: string;
   ordering: string;
   title: string;
   region: string | null;
   language: string | null;
   types: string | null; // 'dvd,festival' 형태
   attributes: string | null;
-  isOriginalTitle: string; // '0' or '1'
+  is_original_title: string; // '0' or '1'
 }
 
 /**
@@ -54,9 +64,9 @@ export interface TitleAkas {
  */
 export interface TitleEpisode {
   tconst: string;
-  parentTconst: string;
-  seasonNumber: string | null;
-  episodeNumber: string | null;
+  parent_tconst: string;
+  season_number: string | null;
+  episode_number: string | null;
 }
 
 /**
@@ -78,11 +88,11 @@ export interface TitlePrincipals {
  */
 export interface NameBasics {
   nconst: string;
-  primaryName: string;
-  birthYear: string | null;
-  deathYear: string | null;
-  primaryProfession: string | null; // 'actor,producer,writer' 형태
-  knownForTitles: string | null; // 'tt0000001,tt0000002' 형태
+  primary_name: string;
+  birth_year: string | null;
+  death_year: string | null;
+  primary_profession: string | null; // 'actor,producer,writer' 형태
+  known_for_titles: string | null; // 'tt0000001,tt0000002' 형태
 }
 
 /**
