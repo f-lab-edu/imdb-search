@@ -10,7 +10,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx src/index.ts",
     "test-download": "tsx src/utils/download.test.ts",
-    "test-db": "tsx src/db/db.test.ts"
+    "test-db": "tsx src/db/db.test.ts",
+    "test-task": "tsx src/worker/task.test.ts"
   },
   "repository": {
     "type": "git",
