@@ -11,7 +11,8 @@
     "dev": "tsx src/index.ts",
     "test-download": "tsx src/utils/download.test.ts",
     "test-db": "tsx src/db/db.test.ts",
-    "test-parse": "tsx src/utils/parse.test.ts"
+    "test-parse": "tsx src/utils/parse.test.ts",
+    "test-task": "tsx src/worker/task.test.ts"
   },
   "repository": {
     "type": "git",
