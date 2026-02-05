@@ -1,4 +1,5 @@
 import mysql from "mysql2/promise";
+import { MysqlCommand } from "./commands.js";
 
 export interface DatabaseConfig {
   host: string;
@@ -10,6 +11,7 @@ export interface DatabaseConfig {
 
 export class MysqlDatabase {
   private pool: mysql.Pool;
+  readonly commands: MysqlCommand;
 
   constructor(config: DatabaseConfig) {
     this.pool = mysql.createPool({
@@ -22,10 +24,17 @@ export class MysqlDatabase {
       enableKeepAlive: true, // 장시간 연결 유지 시 유용
       keepAliveInitialDelay: 10000,
     });
+
+    this.commands = new MysqlCommand(this.pool);
   }
 
   getPool(): mysql.Pool {
     return this.pool;
+  }
+
+  async init() {
+    await this.commands.migrateSchema();
+    await this.ping();
   }
 
   async ping() {
