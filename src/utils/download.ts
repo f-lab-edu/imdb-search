@@ -6,7 +6,10 @@ import { type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 
-export const downloadFile = async (dest: string, url: string) => {
+export const downloadFile = async (
+  dest: string,
+  url: string,
+): Promise<string> => {
   const outPath = dest.replace(".gz", "");
   const writer = fs.createWriteStream(outPath);
 
@@ -16,6 +19,8 @@ export const downloadFile = async (dest: string, url: string) => {
     const resp = await axios.get<Readable>(url, { responseType: "stream" });
 
     await pipeline(resp.data, createGunzip(), writer);
+
+    return outPath;
   } catch (error) {
     writer.destroy();
 
