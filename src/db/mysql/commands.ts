@@ -6,6 +6,12 @@ import {
   type TableName,
   type DatasetType,
   type TitleBasics,
+  type NameBasics,
+  type TitleAkas,
+  type TitleRatings,
+  type TitleEpisode,
+  type TitleCrew,
+  type TitlePrincipals,
 } from "../../utils/index.js";
 
 export class MysqlCommand {
@@ -82,9 +88,10 @@ export class MysqlCommand {
   ) {
     if (data.length == 0) return;
 
-    const conn = await this.pool.getConnection();
+    let conn = null;
 
     try {
+      conn = await this.pool.getConnection();
       const keys = Object.keys(data[0]!) as Array<keyof T>; // 위에서 길이 체크 했음
       const values = data.map((row) => keys.map((k) => row[k]));
 
@@ -96,22 +103,7 @@ export class MysqlCommand {
       console.error("bulk insert error:", (err as Error).message);
       throw err;
     } finally {
-      conn.release();
-    }
-  }
-
-  // for test only
-  async reset() {
-    try {
-      await this.pool.query(
-        "DROP TABLE IF EXISTS TITLE_GENRES, TITLE_AKAS, RATINGS, EPISODES, TITLE_PRINCIPALS, TITLE_CREW;",
-      );
-
-      await this.pool.query("DROP TABLE IF EXISTS TITLES, PERSONS, GENRES;");
-
-      console.log("reset db ok");
-    } catch (err) {
-      console.error(`failed to reset db: ${(err as Error).message}`);
+      conn?.release();
     }
   }
 
@@ -141,7 +133,7 @@ export class MysqlCommand {
     }
   }
 
-  // title.basics.tsv
+  // title.basics.tsv - genres, titles, title_genres
   async insertTitleBasics(data: TitleBasics[]) {
     if (data.length == 0) return;
 
@@ -170,6 +162,78 @@ export class MysqlCommand {
       await this.bulkInsert("TITLE_GENRES", titleGenres);
     } catch (err) {
       console.error(`insert title basics error: ${(err as Error).message}`);
+      throw err;
+    }
+  }
+
+  // name.basics.tsv - persons
+  async insertNameBasics(data: NameBasics[]) {
+    if (data.length == 0) return;
+
+    try {
+      await this.bulkInsert("PERSONS", data);
+    } catch (err) {
+      console.error(`insert name basics error: ${(err as Error).message}`);
+      throw err;
+    }
+  }
+
+  // title.akas.tsv
+  async insertTitleAkas(data: TitleAkas[]) {
+    if (data.length == 0) return;
+
+    try {
+      await this.bulkInsert("TITLE_AKAS", data);
+    } catch (err) {
+      console.error(`insert title akas error: ${(err as Error).message}`);
+      throw err;
+    }
+  }
+
+  // title.ratings.tsv
+  async insertTitleRatings(data: TitleRatings[]) {
+    if (data.length == 0) return;
+
+    try {
+      await this.bulkInsert("RATINGS", data);
+    } catch (err) {
+      console.error(`insert title ratings error: ${(err as Error).message}`);
+      throw err;
+    }
+  }
+
+  // title.episodes.tsv
+  async insertTitleEpisodes(data: TitleEpisode[]) {
+    if (data.length == 0) return;
+
+    try {
+      await this.bulkInsert("EPISODES", data);
+    } catch (err) {
+      console.error(`insert title episodes error: ${(err as Error).message}`);
+      throw err;
+    }
+  }
+
+  // title.crew.tsv
+  async insertTitleCrew(data: TitleCrew[]) {
+    if (data.length == 0) return;
+
+    try {
+      await this.bulkInsert("TITLE_CREW", data);
+    } catch (err) {
+      console.error(`insert title crew error: ${(err as Error).message}`);
+      throw err;
+    }
+  }
+
+  // title.principals.tsv
+  async insertTitlePrincipals(data: TitlePrincipals[]) {
+    if (data.length == 0) return;
+
+    try {
+      await this.bulkInsert("TITLE_PRINCIPALS", data);
+    } catch (err) {
+      console.error(`insert title principals error: ${(err as Error).message}`);
       throw err;
     }
   }

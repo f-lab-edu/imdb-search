@@ -6,6 +6,7 @@ export type TableName =
   | "EPISODES"
   | "PERSONS"
   | "TITLE_PRINCIPALS"
+  | "TITLE_CREW"
   | "TITLE_AKAS";
 
 export type DatasetType =
@@ -48,7 +49,7 @@ export interface TitleRatings {
  * 지역별 대체 제목
  */
 export interface TitleAkas {
-  title_id: string;
+  tconst: string;
   ordering: string;
   title: string;
   region: string | null;
