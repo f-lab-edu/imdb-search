@@ -1,13 +1,16 @@
-export type TableName =
-  | "TITLES"
-  | "GENRES"
-  | "TITLE_GENRES"
-  | "RATINGS"
-  | "EPISODES"
-  | "PERSONS"
-  | "TITLE_PRINCIPALS"
-  | "TITLE_CREW"
-  | "TITLE_AKAS";
+const TableNamesArr = [
+  "TITLES",
+  "GENRES",
+  "TITLE_GENRES",
+  "RATINGS",
+  "EPISODES",
+  "PERSONS",
+  "TITLE_PRINCIPALS",
+  "TITLE_CREW",
+  "TITLE_AKAS",
+] as const;
+
+export type TableName = (typeof TableNamesArr)[number];
 
 export type DatasetType =
   | TitleBasics
@@ -105,3 +108,7 @@ export interface TitleCrew {
   directors: string | null; // 'nm0000001,nm0000002' 형태
   writers: string | null; // 'nm0000001,nm0000002' 형태
 }
+
+export const isTableName = (v: string): v is TableName => {
+  return TableNamesArr.some((name) => name === v);
+};

@@ -1,9 +1,17 @@
 import dotenv from "dotenv";
 import path from "node:path";
-import fs from "node:fs";
 import mysql from "mysql2/promise";
 import { generateTSVlines } from "../utils/parse.js";
-import type { NameBasics, TableName, TitleBasics } from "../utils/types.js";
+import {
+  isTableName,
+  type NameBasics,
+  type TitleAkas,
+  type TitleBasics,
+  type TitleCrew,
+  type TitleEpisode,
+  type TitlePrincipals,
+  type TitleRatings,
+} from "../utils/types.js";
 
 dotenv.config({ path: ".env.dev" });
 
@@ -24,6 +32,68 @@ const resetMysql = async (pool: mysql.Pool) => {
     console.error(`failed to reset db: ${(err as Error).message}`);
   } finally {
     conn?.release();
+  }
+};
+
+interface TestConfig {
+  filePath: string;
+  insertFn: (data: any[]) => Promise<void>;
+  batchSize: number;
+  maxConcurrent?: number;
+  maxLines?: number;
+}
+
+const testInsert = async (tcfg: TestConfig) => {
+  console.time("insert test");
+
+  try {
+    const maxConcurrent = tcfg.maxConcurrent || 15;
+    let data = [];
+    let promises = [];
+    let lines = 0;
+    let batchCount = 0;
+
+    for await (const line of generateTSVlines(tcfg.filePath)) {
+      data.push(line);
+      lines += 1;
+
+      if (data.length >= tcfg.batchSize) {
+        console.log(`inserted ${lines} lines`);
+
+        promises.push(tcfg.insertFn([...data]));
+        data = [];
+
+        if (promises.length >= maxConcurrent) {
+          console.log(
+            `Batch ${batchCount++}: lines ${lines - data.length + 1} to ${lines}`,
+          );
+
+          await Promise.all([...promises]);
+          promises = [];
+        }
+      }
+
+      if (tcfg.maxLines && lines >= tcfg.maxLines) {
+        break;
+      }
+    }
+
+    if (promises.length > 0) {
+      await Promise.all([...promises]);
+    }
+
+    if (data.length > 0) {
+      await tcfg.insertFn(data);
+      lines += data.length;
+      console.log(`inserted ${lines} lines`);
+    }
+
+    console.log("insert test ok");
+  } catch (err) {
+    console.error(`test failed: ${(err as Error).message}`);
+    throw err;
+  } finally {
+    console.timeEnd("insert test");
   }
 };
 
@@ -53,98 +123,87 @@ const resetMysql = async (pool: mysql.Pool) => {
   try {
     const { MysqlCommand } = await import("./index.js");
 
-    console.time("insert test");
+    const insertTableName = process.env.TABLE_NAME;
 
-    const tsv = path.join(config.datasets.downloadDir, "name.basics.tsv");
-    const maxConcurrent = 15; // same as db pool thread restrictions
+    if (!insertTableName || !isTableName(insertTableName)) {
+      throw new Error("invalid table name");
+    }
 
-    let cnt = 0;
-    let data: NameBasics[] = [];
-    let promises = [];
-
-    for await (const line of generateTSVlines<NameBasics>(tsv)) {
-      data.push(line);
-
-      if (data.length >= config.db.mysql.batchSize) {
-        promises.push(MysqlCommand.insertNameBasics([...data]));
-        cnt += data.length;
-        data = [];
-
-        if (promises.length >= maxConcurrent) {
-          await Promise.all(promises);
-          console.log(`inserted ${cnt} lines`);
-          promises = [];
-        }
+    const { filePath, insertFn } = (() => {
+      switch (insertTableName) {
+        case "TITLES":
+        case "GENRES":
+        case "TITLE_GENRES":
+          return {
+            filePath: path.join(
+              config.datasets.downloadDir,
+              "title.basics.tsv",
+            ),
+            insertFn: (data: any[]) =>
+              MysqlCommand.insertTitleBasics(data as TitleBasics[]),
+          };
+        case "RATINGS":
+          return {
+            filePath: path.join(
+              config.datasets.downloadDir,
+              "title.ratings.tsv",
+            ),
+            insertFn: (data: any[]) =>
+              MysqlCommand.insertTitleRatings(data as TitleRatings[]),
+          };
+        case "EPISODES":
+          return {
+            filePath: path.join(
+              config.datasets.downloadDir,
+              "title.episode.tsv",
+            ),
+            insertFn: (data: any[]) =>
+              MysqlCommand.insertTitleEpisodes(data as TitleEpisode[]),
+          };
+        case "PERSONS":
+          return {
+            filePath: path.join(config.datasets.downloadDir, "name.basics.tsv"),
+            insertFn: (data: any[]) =>
+              MysqlCommand.insertNameBasics(data as NameBasics[]),
+          };
+        case "TITLE_PRINCIPALS":
+          return {
+            filePath: path.join(
+              config.datasets.downloadDir,
+              "title.principals.tsv",
+            ),
+            insertFn: (data: any[]) =>
+              MysqlCommand.insertTitlePrincipals(data as TitlePrincipals[]),
+          };
+        case "TITLE_CREW":
+          return {
+            filePath: path.join(config.datasets.downloadDir, "title.crew.tsv"),
+            insertFn: (data: any[]) =>
+              MysqlCommand.insertTitleCrew(data as TitleCrew[]),
+          };
+        case "TITLE_AKAS":
+          return {
+            filePath: path.join(config.datasets.downloadDir, "title.akas.tsv"),
+            insertFn: (data: any[]) =>
+              MysqlCommand.insertTitleAkas(data as TitleAkas[]),
+          };
       }
-    }
+    })();
 
-    if (promises.length > 0) {
-      await Promise.all(promises);
-      console.log(`inserted ${cnt} lines`);
-    }
+    const tcfg: TestConfig = {
+      filePath,
+      insertFn,
+      batchSize: config.db.mysql.batchSize,
+      maxConcurrent: 15,
+      // maxLines: 1000,
+    };
 
-    if (data.length > 0) {
-      await MysqlCommand.insertNameBasics(data);
-      cnt += data.length;
-      console.log(`final insert: ${cnt} lines`);
-    }
+    await testInsert(tcfg);
   } catch (err) {
+    // await resetMysql(MysqlDB.getPool());
     console.error((err as Error).message);
   } finally {
-    await resetMysql(MysqlDB.getPool());
+    // await resetMysql(MysqlDB.getPool());
     await MysqlDB.close();
-    console.timeEnd("insert test");
   }
 })();
-
-const inertTitleBasicsTest = async (config: any, mysqlCommand: any) => {
-  let cnt = 0;
-  const tsv = path.join(config.datasets.downloadDir, "title.basics.tsv");
-
-  let data: TitleBasics[] = [];
-
-  for await (const line of generateTSVlines<TitleBasics>(tsv)) {
-    data.push(line);
-
-    if ((cnt + data.length) % 100 === 0) {
-      console.log(`Reading... ${cnt + data.length} lines`);
-    }
-
-    if (data.length > config.db.mysql.batchSize) {
-      try {
-        console.log(
-          `[${new Date().toISOString()}] Inserting batch ${Math.floor(cnt / 1000) + 1}...`,
-        );
-
-        await mysqlCommand.insertTitleBasics(data);
-
-        cnt += data.length;
-        console.log(`[${new Date().toISOString()}] ${cnt} lines`);
-        data.length = 0;
-      } catch (err) {
-        console.error(`insert error: ${(err as Error).message}`);
-
-        fs.writeFileSync("failed.json", JSON.stringify(data));
-
-        throw err;
-      }
-    }
-  }
-
-  if (data.length > 0) {
-    try {
-      await mysqlCommand.insertTitleBasics(data);
-      cnt += data.length;
-
-      console.log(`successfully inserted final batch: total ${cnt} lines`);
-
-      data.length = 0;
-    } catch (err) {
-      console.error(`insert error: ${(err as Error).message}`);
-
-      fs.writeFileSync("failed2.json", JSON.stringify(data));
-
-      throw err;
-    }
-  }
-};

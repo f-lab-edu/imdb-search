@@ -17,6 +17,7 @@ import {
 export class MysqlCommand {
   private readonly pool: mysql.Pool;
   private genresMap: Map<string, number> | null;
+  private genreLock: Promise<void> = Promise.resolve();
 
   constructor(pool: mysql.Pool, genresMap?: Map<string, number>) {
     this.genresMap = genresMap || null;
@@ -92,14 +93,21 @@ export class MysqlCommand {
 
     try {
       conn = await this.pool.getConnection();
+
+      await conn.beginTransaction();
+
       const keys = Object.keys(data[0]!) as Array<keyof T>; // 위에서 길이 체크 했음
       const values = data.map((row) => keys.map((k) => row[k]));
 
       await conn.query(
-        `INSERT INTO ${tableName} (${keys.join(",")}) VALUES ?`,
+        `INSERT IGNORE INTO ${tableName} (${keys.join(",")}) VALUES ?`,
         [values],
       );
+
+      await conn.commit();
     } catch (err) {
+      await conn?.rollback();
+
       console.error("bulk insert error:", (err as Error).message);
       throw err;
     } finally {
@@ -107,30 +115,42 @@ export class MysqlCommand {
     }
   }
 
-  private async insertGenres(data: TitleBasics[]) {
-    const conn = await this.pool.getConnection();
+  private async insertGenres(data: TitleBasics[]): Promise<void> {
+    this.genreLock = this.genreLock
+      .catch(() => {
+        // TODO: ignore previous errors for now, need implment error hanlding logics here
+      })
+      .then(async () => {
+        const conn = await this.pool.getConnection();
 
-    try {
-      const newGenres = [
-        ...new Set(data.flatMap((row) => row.genres?.split(",") ?? [])),
-      ].filter((name) => !this.genresMap?.has(name));
+        try {
+          const newGenres = [
+            ...new Set(data.flatMap((row) => row.genres?.split(",") ?? [])),
+          ].filter((name) => name && !this.genresMap?.has(name));
 
-      if (newGenres.length > 0) {
-        const [result] = await conn.query<mysql.ResultSetHeader>(
-          "INSERT INTO GENRES(name) VALUES ?",
-          [newGenres.map((n) => [n])],
-        );
+          if (newGenres.length > 0) {
+            await conn.query("INSERT IGNORE INTO GENRES(name) VALUES ?", [
+              newGenres.map((n) => [n]),
+            ]);
 
-        newGenres.forEach((name, i) =>
-          this.genresMap?.set(name, result.insertId + i),
-        );
-      }
-    } catch (err) {
-      console.error(`insert genres error: ${(err as Error).message}`);
-      throw err;
-    } finally {
-      conn.release();
-    }
+            const [rows] = await conn.query<mysql.RowDataPacket[]>(
+              "SELECT id, name FROM GENRES WHERE name IN (?)",
+              [newGenres],
+            );
+
+            rows.forEach((row: mysql.RowDataPacket) => {
+              this.genresMap?.set(row.name, row.id);
+            });
+          }
+        } catch (err) {
+          console.error(`insert genres error: ${(err as Error).message}`);
+          throw err;
+        } finally {
+          conn.release();
+        }
+      });
+
+    return this.genreLock;
   }
 
   // title.basics.tsv - genres, titles, title_genres
