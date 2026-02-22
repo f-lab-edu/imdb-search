@@ -1,5 +1,5 @@
 import { config } from "../config/index.js";
-import { MysqlDatabase } from "./mysql/index.js";
+import { MysqlDatabase, MysqlCommand as MysqlCmd } from "./mysql/index.js";
 import { RedisDatabase } from "./redis.js";
 import { OpenSearchDatabase } from "./openSearch.js";
 
@@ -8,3 +8,5 @@ import { OpenSearchDatabase } from "./openSearch.js";
 export const MysqlDB = new MysqlDatabase(config.db.mysql);
 export const RedisDB = new RedisDatabase(config.db.redis);
 export const OpenSearchDB = new OpenSearchDatabase(config.db.opensearch);
+
+export const MysqlCommand = await MysqlCmd.create(MysqlDB.getPool());

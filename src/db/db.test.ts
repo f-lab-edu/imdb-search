@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import path from "node:path";
+import fs from "node:fs";
 import { generateTSVlines } from "../utils/parse.js";
 import type { TableName, TitleBasics } from "../utils/types.js";
 
@@ -29,30 +30,63 @@ dotenv.config({ path: ".env.dev" });
 
   // mysql 입력 테스트
   try {
-    console.log("starting to insert...");
-    console.time("insert");
+    const { MysqlCommand } = await import("./index.js");
 
-    const batch = [];
-    const filePath = path.join(config.datasets.downloadDir, "title.basics.tsv");
+    console.time("insert test");
 
-    for await (const row of generateTSVlines<TitleBasics>(filePath)) {
-      const { genres, ...titlesRow } = row;
+    let cnt = 0;
+    const tsv = path.join(config.datasets.downloadDir, "title.basics.tsv");
 
-      batch.push(titlesRow as TitleBasics);
+    let data: TitleBasics[] = [];
 
-      if (batch.length >= config.db.mysql.batchSize) {
-        await MysqlDB.commands.bulkInsert<TitleBasics>("TITLES", batch);
-        batch.length = 0;
+    for await (const line of generateTSVlines<TitleBasics>(tsv)) {
+      data.push(line);
+
+      if ((cnt + data.length) % 100 === 0) {
+        console.log(`Reading... ${cnt + data.length} lines`);
+      }
+
+      if (data.length > config.db.mysql.batchSize) {
+        try {
+          console.log(
+            `[${new Date().toISOString()}] Inserting batch ${Math.floor(cnt / 1000) + 1}...`,
+          );
+
+          await MysqlCommand.insertTitleBasics(data);
+
+          cnt += data.length;
+          console.log(`[${new Date().toISOString()}] ✓ ${cnt} lines`);
+          data.length = 0;
+        } catch (err) {
+          console.error(`insert error: ${(err as Error).message}`);
+
+          fs.writeFileSync("failed.json", JSON.stringify(data));
+
+          throw err;
+        }
       }
     }
 
-    if (batch.length > 0) await MysqlDB.commands.bulkInsert("TITLES", batch);
+    if (data.length > 0) {
+      try {
+        await MysqlCommand.insertTitleBasics(data);
+        cnt += data.length;
 
-    console.log("successfully inserted titles");
-    console.timeEnd("insert");
+        console.log(`successfully inserted final batch: total ${cnt} lines`);
+
+        data.length = 0;
+      } catch (err) {
+        console.error(`insert error: ${(err as Error).message}`);
+
+        fs.writeFileSync("failed2.json", JSON.stringify(data));
+
+        throw err;
+      }
+    }
   } catch (err) {
-    console.error(`failed to insert: ${(err as Error).message}`);
+    console.error((err as Error).message);
   } finally {
     await MysqlDB.close();
+    console.timeEnd("insert test");
   }
 })();

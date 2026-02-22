@@ -1,5 +1,4 @@
 import mysql from "mysql2/promise";
-import { MysqlCommand } from "./commands.js";
 
 export interface DatabaseConfig {
   host: string;
@@ -7,15 +6,17 @@ export interface DatabaseConfig {
   password: string;
   database: string;
   port: number;
+  batchSize: number;
 }
 
 export class MysqlDatabase {
   private pool: mysql.Pool;
-  readonly commands: MysqlCommand;
 
   constructor(config: DatabaseConfig) {
+    const { batchSize, ...cfg } = config;
+
     this.pool = mysql.createPool({
-      ...config,
+      ...cfg,
 
       // 풀 관리 옵션
       connectionLimit: 15, // 최대 연결 수
@@ -24,8 +25,6 @@ export class MysqlDatabase {
       enableKeepAlive: true, // 장시간 연결 유지 시 유용
       keepAliveInitialDelay: 10000,
     });
-
-    this.commands = new MysqlCommand(this.pool);
   }
 
   getPool(): mysql.Pool {
@@ -33,7 +32,6 @@ export class MysqlDatabase {
   }
 
   async init() {
-    await this.commands.migrateSchema();
     await this.ping();
   }
 
