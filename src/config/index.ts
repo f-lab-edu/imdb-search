@@ -66,7 +66,14 @@ const DATASET_CONFIG = {
   ],
 };
 
+const TASK_CONFIG = {
+  queueName: process.env.TASK_QUEUE_NAME || "task_queue",
+  maxWorkers: Number(process.env.TASK_MAX_WORKERS) || 10,
+  maxRetry: Number(process.env.TASK_MAX_RETRY) || 3,
+};
+
 export const config = {
   db: DB_CONFIG,
   datasets: DATASET_CONFIG,
+  task: TASK_CONFIG,
 };

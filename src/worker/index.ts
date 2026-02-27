@@ -8,17 +8,26 @@ import {
 import { RedisDB } from "../db/index.js";
 import { handleParseAndInsert, hanldeDownloadTask } from "./handlers.js";
 
+export interface TaskConfig {
+  queueName: string;
+  maxWorkers: number;
+  maxRetry: number;
+}
+
 export class TaskRunner {
-  private readonly maxWorkers = 10; // TODO: 설정 받아서 거기서 가져오기
-  private readonly maxRetry = 3; // TODO: 설정 받아서 거기서 가져오기
-  private readonly queueName = "q_name"; // TODO: 설정 받아서 거기서 가져오기
+  private readonly maxWorkers: number;
+  private readonly maxRetry: number;
+  private readonly queueName: string;
   private isRunning = false;
 
   private readonly redis;
   private workers: Promise<unknown>[] = [];
 
-  constructor(redis: typeof RedisDB) {
+  constructor(redis: typeof RedisDB, config: TaskConfig) {
     this.redis = redis.getClient();
+    this.maxWorkers = config.maxWorkers;
+    this.maxRetry = config.maxRetry;
+    this.queueName = config.queueName;
   }
 
   async pushTask(task: Task) {
