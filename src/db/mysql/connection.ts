@@ -6,14 +6,18 @@ export interface DatabaseConfig {
   password: string;
   database: string;
   port: number;
+  batchSize: number;
+  maxConcurrent: number;
 }
 
 export class MysqlDatabase {
   private pool: mysql.Pool;
 
   constructor(config: DatabaseConfig) {
+    const { batchSize, maxConcurrent, ...cfg } = config;
+
     this.pool = mysql.createPool({
-      ...config,
+      ...cfg,
 
       // 풀 관리 옵션
       connectionLimit: 15, // 최대 연결 수
@@ -26,6 +30,10 @@ export class MysqlDatabase {
 
   getPool(): mysql.Pool {
     return this.pool;
+  }
+
+  async init() {
+    await this.ping();
   }
 
   async ping() {
