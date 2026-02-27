@@ -7,13 +7,14 @@ export interface DatabaseConfig {
   database: string;
   port: number;
   batchSize: number;
+  maxConcurrent: number;
 }
 
 export class MysqlDatabase {
   private pool: mysql.Pool;
 
   constructor(config: DatabaseConfig) {
-    const { batchSize, ...cfg } = config;
+    const { batchSize, maxConcurrent, ...cfg } = config;
 
     this.pool = mysql.createPool({
       ...cfg,

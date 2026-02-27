@@ -1,8 +1,7 @@
 -- 1. 장르 - title.basics.tsv.gz
 CREATE TABLE IF NOT EXISTS GENRES(
     id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(50) NOT NULL UNIQUE,
-    INDEX idx_name (name)
+    name VARCHAR(50) NOT NULL UNIQUE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. 작품 기본 정보 - title.basics.tsv.gz

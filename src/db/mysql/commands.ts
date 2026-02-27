@@ -16,11 +16,11 @@ import {
 
 export class MysqlCommand {
   private readonly pool: mysql.Pool;
-  private genresMap: Map<string, number> | null;
+  private genresMap: Map<string, number>;
   private genreLock: Promise<void> = Promise.resolve();
 
   constructor(pool: mysql.Pool, genresMap?: Map<string, number>) {
-    this.genresMap = genresMap || null;
+    this.genresMap = genresMap || new Map();
     this.pool = pool;
   }
 
@@ -28,7 +28,7 @@ export class MysqlCommand {
     const conn = await pool.getConnection();
 
     try {
-      await MysqlCommand.migrateSchema(pool);
+      await MysqlCommand.migrateSchema(conn);
 
       let genresMap: Map<string, number> = new Map();
       const [rows] = await conn.query<mysql.RowDataPacket[]>(
@@ -45,9 +45,7 @@ export class MysqlCommand {
     }
   }
 
-  static async migrateSchema(pool: mysql.Pool) {
-    const conn = await pool.getConnection();
-
+  static async migrateSchema(conn: mysql.PoolConnection) {
     try {
       const sql = await fs.readFile(
         path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.sql"),
@@ -59,14 +57,14 @@ export class MysqlCommand {
         .map((q) => q.trim())
         .filter((q) => q.length > 0);
 
-      await Promise.all(queries.map((q) => conn.query(q)));
+      for (const query of queries) {
+        await conn.query(query);
+      }
 
       console.log("mysql table migration ok");
     } catch (err) {
       console.error((err as Error).message);
       throw err;
-    } finally {
-      conn.release();
     }
   }
 
@@ -100,7 +98,7 @@ export class MysqlCommand {
       const values = data.map((row) => keys.map((k) => row[k]));
 
       await conn.query(
-        `INSERT IGNORE INTO ${tableName} (${keys.join(",")}) VALUES ?`,
+        `INSERT INTO ${tableName} (${keys.join(",")}) VALUES ?`,
         [values],
       );
 
@@ -126,7 +124,7 @@ export class MysqlCommand {
         try {
           const newGenres = [
             ...new Set(data.flatMap((row) => row.genres?.split(",") ?? [])),
-          ].filter((name) => name && !this.genresMap?.has(name));
+          ].filter((name) => name && !this.genresMap.has(name));
 
           if (newGenres.length > 0) {
             await conn.query("INSERT IGNORE INTO GENRES(name) VALUES ?", [
@@ -139,7 +137,7 @@ export class MysqlCommand {
             );
 
             rows.forEach((row: mysql.RowDataPacket) => {
-              this.genresMap?.set(row.name, row.id);
+              this.genresMap.set(row.name, row.id);
             });
           }
         } catch (err) {
@@ -174,7 +172,7 @@ export class MysqlCommand {
           (row.genres?.split(",") ?? [])
             .map((genreName) => ({
               tconst: row.tconst,
-              genre_id: this.genresMap?.get(genreName) || -1,
+              genre_id: this.genresMap.get(genreName) ?? -1,
             }))
             .filter((v) => v.genre_id > -1),
       );

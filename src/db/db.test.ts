@@ -4,6 +4,7 @@ import mysql from "mysql2/promise";
 import { generateTSVlines } from "../utils/parse.js";
 import {
   isTableName,
+  type DatasetType,
   type NameBasics,
   type TitleAkas,
   type TitleBasics,
@@ -37,7 +38,7 @@ const resetMysql = async (pool: mysql.Pool) => {
 
 interface TestConfig {
   filePath: string;
-  insertFn: (data: any[]) => Promise<void>;
+  insertFn: (data: DatasetType[]) => Promise<void>;
   batchSize: number;
   maxConcurrent?: number;
   maxLines?: number;
@@ -61,7 +62,6 @@ const testInsert = async (tcfg: TestConfig) => {
         console.log(`inserted ${lines} lines`);
 
         promises.push(tcfg.insertFn([...data]));
-        data = [];
 
         if (promises.length >= maxConcurrent) {
           console.log(
@@ -71,6 +71,8 @@ const testInsert = async (tcfg: TestConfig) => {
           await Promise.all([...promises]);
           promises = [];
         }
+
+        data = [];
       }
 
       if (tcfg.maxLines && lines >= tcfg.maxLines) {
@@ -84,7 +86,6 @@ const testInsert = async (tcfg: TestConfig) => {
 
     if (data.length > 0) {
       await tcfg.insertFn(data);
-      lines += data.length;
       console.log(`inserted ${lines} lines`);
     }
 
@@ -194,16 +195,14 @@ const testInsert = async (tcfg: TestConfig) => {
       filePath,
       insertFn,
       batchSize: config.db.mysql.batchSize,
-      maxConcurrent: 15,
+      maxConcurrent: config.db.mysql.maxConcurrent,
       // maxLines: 1000,
     };
 
     await testInsert(tcfg);
   } catch (err) {
-    // await resetMysql(MysqlDB.getPool());
     console.error((err as Error).message);
   } finally {
-    // await resetMysql(MysqlDB.getPool());
     await MysqlDB.close();
   }
 })();

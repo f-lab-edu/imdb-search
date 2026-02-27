@@ -6,6 +6,7 @@ const DB_CONFIG = {
     database: process.env.DB_NAME || "test",
     port: Number(process.env.DB_PORT) || 3306,
     batchSize: Number(process.env.DB_BATCH_SIZE) || 1000,
+    maxConcurrent: Number(process.env.DB_MAX_CONCURRENT) || 15,
   },
   redis: {
     socket: {
