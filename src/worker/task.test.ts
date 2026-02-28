@@ -1,26 +1,25 @@
+import path from "node:path";
 import dotenv from "dotenv";
 
 dotenv.config({ path: ".env.dev" });
 
-import path from "node:path";
-import { TaskName } from "./types.js";
-
 (async () => {
-  const { MysqlDB, RedisDB, OpenSearchDB } = await import("../db/index.js");
+  const { MysqlDB, RedisDB, OpenSearchDB, MysqlCommand } =
+    await import("../db/index.js");
   const { TaskRunner } = await import("./index.js");
   const { config } = await import("../config/index.js");
+  const { TaskName } = await import("./types.js");
 
-  const tr = new TaskRunner(RedisDB, config.task);
+  const tr = new TaskRunner(RedisDB, MysqlCommand, config.task);
 
   try {
     await RedisDB.ping();
 
-    const runnerPromise = tr.start();
-
     // push download tasks
     for (const file of config.datasets.files) {
       await tr.pushTask({
-        id: Math.random().toString(),
+        batchId: tr.getBatchId(),
+        taskId: Math.random().toString(),
         name: TaskName.DOWNLOAD,
         payload: {
           url: config.datasets.baseUrl + file.name,
@@ -31,6 +30,7 @@ import { TaskName } from "./types.js";
       });
     }
 
+    const runnerPromise = tr.start();
     await runnerPromise;
   } catch (err) {
     console.error(`error occured: ${err}`);

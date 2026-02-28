@@ -1,10 +1,14 @@
+import type { DatasetKey } from "../utils/types.js";
+
 export enum TaskName {
   DOWNLOAD = "DOWNLOAD",
-  PARSE_AND_INSERT = "PARSE_AND_INSERT",
+  PARSE_PRIMARY = "PARSE_PRIMARY",
+  PARSE_SECONDARY = "PARSE_SECONDARY",
 }
 
 export interface Task<T = unknown> {
-  id: string; // 작업 구분용 고유 id
+  batchId: string;
+  taskId: string; // 작업 구분용 고유 id
   name: TaskName;
   payload: T;
   retryCount: number; // 실패 시 재시도 횟수
@@ -18,12 +22,15 @@ export interface DownloadPayload {
 
 export interface ParsePayload {
   filePath: string;
+  datasetType: DatasetKey;
+  skip?: boolean;
 }
 
 export const isValidTask = (task: any): task is Task => {
   const isVT =
     task &&
-    typeof task.id === "string" &&
+    typeof task.batchId === "string" &&
+    typeof task.taskId === "string" &&
     Object.values(TaskName).includes(task.name) &&
     typeof task.createdAt === "number";
 
@@ -32,7 +39,8 @@ export const isValidTask = (task: any): task is Task => {
   switch (task.name) {
     case TaskName.DOWNLOAD:
       return isDownloadPayload(task.payload);
-    case TaskName.PARSE_AND_INSERT:
+    case TaskName.PARSE_PRIMARY:
+    case TaskName.PARSE_SECONDARY:
       return isParsePayload(task.payload);
     default:
       return false;

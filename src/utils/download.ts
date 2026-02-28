@@ -2,27 +2,45 @@ import axios from "axios";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import { type Readable } from "node:stream";
+import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
+import crypto from "node:crypto";
 
+// downloads + hash(sha256) file
 export const downloadFile = async (
   dest: string,
   url: string,
-): Promise<string> => {
+): Promise<{ outPath: string; hash: string }> => {
   const outPath = dest.replace(".gz", "");
-  const writer = fs.createWriteStream(outPath);
+  const hash = crypto.createHash("sha256");
+  let writer = null;
 
   try {
     await Promise.all([verifyFileUrl(url), verifyFileDest(outPath)]);
 
+    writer = fs.createWriteStream(outPath);
+
     const resp = await axios.get<Readable>(url, { responseType: "stream" });
 
-    await pipeline(resp.data, createGunzip(), writer);
+    await pipeline(
+      resp.data,
+      createGunzip(),
+      new Transform({
+        transform(chunk, _, callback) {
+          hash.update(chunk);
+          callback(null, chunk);
+        },
+      }),
+      writer,
+    );
 
-    return outPath;
+    return { outPath, hash: hash.digest("hex") };
   } catch (error) {
-    writer.destroy();
+    if (writer) {
+      writer.destroy();
+      writer = null; // finally에서 두 번 해제 안되게 null 할당
+    }
 
     if (axios.isAxiosError(error)) {
       console.error(`Axios error: ${error.message}`);
@@ -35,6 +53,8 @@ export const downloadFile = async (
       await fsPromises.unlink(outPath).catch(() => {});
 
     throw error;
+  } finally {
+    writer?.destroy();
   }
 };
 
