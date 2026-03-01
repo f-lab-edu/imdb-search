@@ -4,8 +4,7 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.dev" });
 
 (async () => {
-  const { MysqlDB, RedisDB, OpenSearchDB, MysqlCommand } =
-    await import("../db/index.js");
+  const { MysqlDB, RedisDB, OpenSearchDB, MysqlCommand } = await import("../db/index.js");
   const { TaskRunner } = await import("./index.js");
   const { config } = await import("../config/index.js");
   const { TaskName } = await import("./types.js");
@@ -19,7 +18,7 @@ dotenv.config({ path: ".env.dev" });
     for (const file of config.datasets.files) {
       await tr.pushTask({
         batchId: tr.getBatchId(),
-        taskId: Math.random().toString(),
+        taskId: crypto.randomUUID(),
         name: TaskName.DOWNLOAD,
         payload: {
           url: config.datasets.baseUrl + file.name,
