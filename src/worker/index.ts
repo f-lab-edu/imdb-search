@@ -6,18 +6,15 @@ import {
   type ParsePayload,
 } from "./types.js";
 import { RedisDB } from "../db/index.js";
-import { handleParseAndInsert, hanldeDownloadTask } from "./handlers.js";
+import { handleDownloadTask, handleParseAndInsert } from "./handlers.js";
 import type { MysqlCommand } from "../db/mysql/commands.js";
-import { isPrimary } from "../utils/helpers.js";
 
-export interface TaskConfig {
+interface TaskConfig {
   mainQueue: string;
   holdQueue: string;
   primaryDoneKey: string;
   maxWorkers: number;
   maxRetry: number;
-  primaryCount: number;
-  batchSize: number;
 }
 
 export class TaskRunner {
@@ -26,8 +23,6 @@ export class TaskRunner {
   private readonly mainQueue: string;
   private readonly holdQueue: string;
   private readonly primaryDoneKey: string;
-  private readonly primaryCount: number;
-  private readonly batchSize: number;
   private isRunning = false;
 
   private readonly batchId;
@@ -45,8 +40,6 @@ export class TaskRunner {
     this.mainQueue = `${config.mainQueue}:${this.batchId}`;
     this.holdQueue = `${config.holdQueue}:${this.batchId}`;
     this.primaryDoneKey = `${config.primaryDoneKey}:${this.batchId}`;
-    this.primaryCount = config.primaryCount;
-    this.batchSize = config.batchSize;
   }
 
   getBatchId() {
@@ -109,20 +102,20 @@ export class TaskRunner {
 
       switch (task.name) {
         case TaskName.DOWNLOAD:
-          const nextTask = await hanldeDownloadTask(
+          const nextTask = await handleDownloadTask(
             this.batchId,
             task.taskId,
             task.payload as DownloadPayload,
-            this.redis,
+            this.redis
           ); // task 타입 가드에서 payload까지 체크해서 괜찮다
 
           const datasetType = nextTask.payload.datasetType;
-          const primary = isPrimary(datasetType);
+          const isPrimary = datasetType == "TITLE_BASICS" || datasetType == "NAME_BASICS";
 
-          if (primary) {
-            await this.redis.rPush(this.mainQueue, JSON.stringify(nextTask));
+          if (isPrimary) {
+            this.redis.rPush(this.mainQueue, JSON.stringify(nextTask));
           } else {
-            await this.redis.rPush(this.holdQueue, JSON.stringify(nextTask));
+            this.redis.rPush(this.holdQueue, JSON.stringify(nextTask));
           }
 
           break;
@@ -132,24 +125,21 @@ export class TaskRunner {
             this.batchId,
             task.taskId,
             task.payload as ParsePayload,
-            this.mysql,
-            this.batchSize,
+            this.mysql
           );
 
           const completedCount = await this.redis.hIncrBy(
             `batch:${this.batchId}`,
             this.primaryDoneKey,
-            1,
+            1
           );
 
-          if (completedCount === this.primaryCount) {
+          // TODO: change 2 to something else so that it can be dynamic
+          if (completedCount == 2) {
             console.log("parse primary phase done, moving on to second phase");
 
             while (true) {
-              const task = await this.redis.rPopLPush(
-                this.holdQueue,
-                this.mainQueue,
-              );
+              const task = await this.redis.rPopLPush(this.holdQueue, this.mainQueue);
               if (!task) break;
             }
 
@@ -163,8 +153,7 @@ export class TaskRunner {
             this.batchId,
             task.taskId,
             task.payload as ParsePayload,
-            this.mysql,
-            this.batchSize,
+            this.mysql
           );
 
           break;

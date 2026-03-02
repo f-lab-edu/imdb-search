@@ -12,7 +12,7 @@
     "test-download": "tsx src/utils/download.test.ts",
     "test-db": "tsx src/db/db.test.ts",
     "test-parse": "tsx src/utils/parse.test.ts",
-    "test-task": "tsx src/worker/task.test.ts"
+    "test-task": "rm -rf dist && tsc && mkdir -p dist/db/mysql && cp src/db/mysql/schema.sql dist/db/mysql/ && node dist/worker/task.test.js"
   },
   "repository": {
     "type": "git",

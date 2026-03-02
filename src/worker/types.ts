@@ -4,6 +4,8 @@ export enum TaskName {
   DOWNLOAD = "DOWNLOAD",
   PARSE_PRIMARY = "PARSE_PRIMARY",
   PARSE_SECONDARY = "PARSE_SECONDARY",
+
+  INSERT_DATA = "INSERT_DATA",
 }
 
 export interface Task<T = unknown> {
@@ -13,6 +15,11 @@ export interface Task<T = unknown> {
   payload: T;
   retryCount: number; // 실패 시 재시도 횟수
   createdAt: number; // 작업 생성 시간
+}
+
+export interface InsertPayload<T = unknown> {
+  datasetType: DatasetKey;
+  data: T[];
 }
 
 export interface DownloadPayload {
@@ -42,19 +49,21 @@ export const isValidTask = (task: any): task is Task => {
     case TaskName.PARSE_PRIMARY:
     case TaskName.PARSE_SECONDARY:
       return isParsePayload(task.payload);
+    case TaskName.INSERT_DATA:
+      return isInsertPayload(task.payload);
     default:
       return false;
   }
 };
 
 const isDownloadPayload = (payload: any): payload is DownloadPayload => {
-  return (
-    payload &&
-    typeof payload.url === "string" &&
-    typeof payload.targetPath === "string"
-  );
+  return payload && typeof payload.url === "string" && typeof payload.targetPath === "string";
 };
 
 const isParsePayload = (payload: any): payload is ParsePayload => {
   return payload && typeof payload.filePath === "string";
+};
+
+const isInsertPayload = (payload: any): payload is InsertPayload => {
+  return payload && typeof payload.datasetType === "string" && Array.isArray(payload.data);
 };
