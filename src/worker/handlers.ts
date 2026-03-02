@@ -39,7 +39,7 @@ export const handleDownloadTask = async (
 
   const oldHash = await redisClient.get(hashKey);
 
-  if (oldHash == hash) {
+  if (oldHash === hash) {
     console.log(`${path.basename(outPath)}: hash match: skip enabled`);
   } else {
     console.log(`${path.basename(outPath)}: New file or hash changed. Parsing required.`);
@@ -123,7 +123,7 @@ const insertByDatasetType = async (
     case "TITLE_RATINGS":
       return await mysqlCmd.insertTitleRatings(data as TitleRatings[]);
     default:
-      throw new Error("received invalid dataset key:", key);
+      throw new Error(`received invalid dataset key: ${key}`);
   }
 };
 
