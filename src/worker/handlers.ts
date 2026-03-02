@@ -22,7 +22,7 @@ export const handleDownloadTask = async (
   batchId: string,
   taskId: string,
   payload: DownloadPayload,
-  redisClient: ReturnType<typeof createClient>
+  redisClient: ReturnType<typeof createClient>,
 ): Promise<Task<ParsePayload>> => {
   const { outPath, hash } = await downloadFile(payload.targetPath, payload.url);
   const info = getDatasetInfoByFileName(path.basename(payload.targetPath));
@@ -31,7 +31,7 @@ export const handleDownloadTask = async (
 
   if (!info) {
     throw new Error(
-      `unknown dataset file: ${path.basename(payload.targetPath)}, check your dataset config`
+      `unknown dataset file: ${path.basename(payload.targetPath)}, check your dataset config`,
     );
   }
 
@@ -42,7 +42,9 @@ export const handleDownloadTask = async (
   if (oldHash === hash) {
     console.log(`${path.basename(outPath)}: hash match: skip enabled`);
   } else {
-    console.log(`${path.basename(outPath)}: New file or hash changed. Parsing required.`);
+    console.log(
+      `${path.basename(outPath)}: New file or hash changed. Parsing required.`,
+    );
   }
 
   await redisClient.set(hashKey, hash);
@@ -63,49 +65,57 @@ export const handleDownloadTask = async (
   };
 };
 
-// TODO: this need to be chained to search db insert
 export const handleParseAndInsert = async (
   batchId: string,
   taskId: string,
   payload: ParsePayload,
-  mysqlCmd: MysqlCommand
+  mysqlCmd: MysqlCommand,
+  batchSize: number,
 ) => {
   if (payload.skip) {
     console.log(`skipping insert: ${payload.datasetType}`);
     return;
   }
 
-  const batchSize = 1000; // TODO: get this from config
-
   let totalCount = 0;
   let buffer = [];
 
-  for await (const row of generateTSVlines(payload.filePath)) {
-    buffer.push(row);
+  try {
+    for await (const row of generateTSVlines(payload.filePath)) {
+      buffer.push(row);
+      if (buffer.length >= batchSize) {
+        await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
+        totalCount += buffer.length;
+        if (totalCount % 100000 === 0) {
+          console.log(
+            `${payload.datasetType}: ${totalCount.toLocaleString()} rows inserted...`,
+          );
+        }
+        buffer = [];
+      }
+    }
 
-    if (buffer.length >= batchSize) {
+    // 마지막 남은 버퍼 처리
+    if (buffer.length > 0) {
       await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
       totalCount += buffer.length;
-
-      if (totalCount % 100000 === 0) {
-        console.log(`${payload.datasetType}: ${totalCount.toLocaleString()} rows inserted...`);
-      }
-
-      buffer = [];
+      buffer = []; // 버퍼 초기화 (CE 버전 반영)
     }
-  }
 
-  if (buffer.length > 0) {
-    await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
+    console.log(
+      `${payload.datasetType}: Total ${totalCount.toLocaleString()} rows inserted.`,
+    );
+  } catch (err) {
+    // ce3b39d 커밋에서 의도한 에러 핸들링 보강
+    console.error(`[Error] ${payload.datasetType} insertion failed:`, err);
+    throw err; // 상위 워커로 에러 전파해서 태스크 실패 처리하게 함
   }
-
-  console.log(`${payload.datasetType}: Total ${totalCount.toLocaleString()} rows inserted.`);
 };
 
 const insertByDatasetType = async (
   mysqlCmd: MysqlCommand,
   key: DatasetKey,
-  data: DatasetType[]
+  data: DatasetType[],
 ) => {
   switch (key) {
     case "TITLE_BASICS":
@@ -127,7 +137,11 @@ const insertByDatasetType = async (
   }
 };
 
-export const handleParseTask = async (batchId: string, task: Task<any>, mysqlCmd: MysqlCommand) => {
+export const handleParseTask = async (
+  batchId: string,
+  task: Task<any>,
+  mysqlCmd: MysqlCommand,
+) => {
   const { datasetType, data, skip } = task.payload;
 
   if (skip) {
