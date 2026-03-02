@@ -194,7 +194,7 @@ const testInsert = async (tcfg: TestConfig) => {
     const tcfg: TestConfig = {
       filePath,
       insertFn,
-      batchSize: config.db.mysql.batchSize,
+      batchSize: config.task.batchSize,
       maxConcurrent: config.db.mysql.maxConcurrent,
       // maxLines: 1000,
     };

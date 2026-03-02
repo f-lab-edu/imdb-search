@@ -5,7 +5,6 @@ const DB_CONFIG = {
     password: process.env.DB_PASSWORD || "",
     database: process.env.DB_NAME || "test",
     port: Number(process.env.DB_PORT) || 3306,
-    batchSize: Number(process.env.DB_BATCH_SIZE) || 1000,
     maxConcurrent: Number(process.env.DB_MAX_CONCURRENT) || 15,
   },
   redis: {
@@ -80,6 +79,7 @@ const TASK_CONFIG = {
   maxWorkers: Number(process.env.TASK_MAX_WORKERS) || 10,
   maxRetry: Number(process.env.TASK_MAX_RETRY) || 3,
   primaryConfig: Number(process.env.TASK_PRIMARY_COUNT) || 2,
+  batchSize: Number(process.env.TASK_BATCH_SIZE) || 1000,
 };
 
 export const config = {

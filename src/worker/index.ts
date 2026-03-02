@@ -17,6 +17,7 @@ export interface TaskConfig {
   maxWorkers: number;
   maxRetry: number;
   primaryCount: number;
+  batchSize: number;
 }
 
 export class TaskRunner {
@@ -26,6 +27,7 @@ export class TaskRunner {
   private readonly holdQueue: string;
   private readonly primaryDoneKey: string;
   private readonly primaryCount: number;
+  private readonly batchSize: number;
   private isRunning = false;
 
   private readonly batchId;
@@ -44,6 +46,7 @@ export class TaskRunner {
     this.holdQueue = `${config.holdQueue}:${this.batchId}`;
     this.primaryDoneKey = `${config.primaryDoneKey}:${this.batchId}`;
     this.primaryCount = config.primaryCount;
+    this.batchSize = config.batchSize;
   }
 
   getBatchId() {
@@ -130,6 +133,7 @@ export class TaskRunner {
             task.taskId,
             task.payload as ParsePayload,
             this.mysql,
+            this.batchSize,
           );
 
           const completedCount = await this.redis.hIncrBy(
@@ -160,6 +164,7 @@ export class TaskRunner {
             task.taskId,
             task.payload as ParsePayload,
             this.mysql,
+            this.batchSize,
           );
 
           break;

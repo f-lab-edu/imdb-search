@@ -66,47 +66,48 @@ export const hanldeDownloadTask = async (
   };
 };
 
-// TODO: this need to be chained to search db insert
 export const handleParseAndInsert = async (
   batchId: string,
   taskId: string,
   payload: ParsePayload,
   mysqlCmd: MysqlCommand,
+  batchSize: number,
 ) => {
   if (payload.skip) {
     console.log(`skipping insert: ${payload.datasetType}`);
     return;
   }
 
-  const batchSize = 1000; // TODO: get this from config
-
   let totalCount = 0;
   let buffer = [];
 
-  for await (const row of generateTSVlines(payload.filePath)) {
-    buffer.push(row);
-
-    if (buffer.length >= batchSize) {
+  try {
+    for await (const row of generateTSVlines(payload.filePath)) {
+      buffer.push(row);
+      if (buffer.length >= batchSize) {
+        await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
+        totalCount += buffer.length;
+        if (totalCount % 100000 === 0) {
+          console.log(
+            `${payload.datasetType}: ${totalCount.toLocaleString()} rows inserted...`,
+          );
+        }
+        buffer = [];
+      }
+    }
+    if (buffer.length > 0) {
       await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
       totalCount += buffer.length;
-
-      if (totalCount % 100000 === 0) {
-        console.log(
-          `${payload.datasetType}: ${totalCount.toLocaleString()} rows inserted...`,
-        );
-      }
-
-      buffer = [];
     }
+    console.log(
+      `${payload.datasetType}: Total ${totalCount.toLocaleString()} rows inserted.`,
+    );
+  } catch (err) {
+    console.error(
+      `${payload.datasetType}: Failed after ${totalCount.toLocaleString()} rows: ${(err as Error).message}`,
+    );
+    throw err;
   }
-
-  if (buffer.length > 0) {
-    await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
-  }
-
-  console.log(
-    `${payload.datasetType}: Total ${totalCount.toLocaleString()} rows inserted.`,
-  );
 };
 
 const insertByDatasetType = async (

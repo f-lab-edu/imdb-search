@@ -14,10 +14,8 @@ export class MysqlDatabase {
   private pool: mysql.Pool;
 
   constructor(config: DatabaseConfig) {
-    const { batchSize, maxConcurrent, ...cfg } = config;
-
     this.pool = mysql.createPool({
-      ...cfg,
+      ...config,
 
       // 풀 관리 옵션
       connectionLimit: 15, // 최대 연결 수
