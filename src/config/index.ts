@@ -79,6 +79,7 @@ const TASK_CONFIG = {
   primaryDoneKey: process.env.TASK_PRIMARY_DONE_KEY || "task_primary_done",
   maxWorkers: Number(process.env.TASK_MAX_WORKERS) || 10,
   maxRetry: Number(process.env.TASK_MAX_RETRY) || 3,
+  primaryConfig: Number(process.env.TASK_PRIMARY_COUNT) || 2,
 };
 
 export const config = {

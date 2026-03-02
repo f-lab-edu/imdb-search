@@ -1,5 +1,8 @@
 import { config } from "../config/index.js";
 
+export const isPrimary = (fileType: string) =>
+  fileType === "TITLE_BASICS" || fileType === "NAME_BASICS";
+
 export const getDatasetInfoByFileName = (fileName: string) => {
   const fileConfig = config.datasets.files.find((f) =>
     fileName.endsWith(f.name),
@@ -7,8 +10,5 @@ export const getDatasetInfoByFileName = (fileName: string) => {
 
   if (!fileConfig) return null;
 
-  const isPrimary =
-    fileConfig.type === "TITLE_BASICS" || fileConfig.type === "NAME_BASICS";
-
-  return { type: fileConfig.type, isPrimary };
+  return { type: fileConfig.type, isPrimary: isPrimary(fileConfig.type) };
 };

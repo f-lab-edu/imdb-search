@@ -37,11 +37,6 @@ export const downloadFile = async (
 
     return { outPath, hash: hash.digest("hex") };
   } catch (error) {
-    if (writer) {
-      writer.destroy();
-      writer = null; // finally에서 두 번 해제 안되게 null 할당
-    }
-
     if (axios.isAxiosError(error)) {
       console.error(`Axios error: ${error.message}`);
     } else {

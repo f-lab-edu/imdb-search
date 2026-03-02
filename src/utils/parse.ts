@@ -20,7 +20,7 @@ const IMDB_HEADER_MAP: Record<string, string> = {
   episodeNumber: "episode_number",
   primaryName: "primary_name",
   birthYear: "birth_year",
-  death_year: "death_year",
+  deathYear: "death_year",
   primaryProfession: "primary_profession",
   knownForTitles: "known_for_titles",
 };
