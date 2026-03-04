@@ -5,7 +5,7 @@ const DB_CONFIG = {
     password: process.env.DB_PASSWORD || "",
     database: process.env.DB_NAME || "test",
     port: Number(process.env.DB_PORT) || 3306,
-    maxConcurrent: Number(process.env.DB_MAX_CONCURRENT) || 15,
+    connectionLimit: Number(process.env.DB_CONN_LIMIT) || 15,
   },
   redis: {
     socket: {

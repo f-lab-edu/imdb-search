@@ -95,20 +95,18 @@ export const handleParseAndInsert = async (
       }
     }
 
-    // 마지막 남은 버퍼 처리
     if (buffer.length > 0) {
       await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
       totalCount += buffer.length;
-      buffer = []; // 버퍼 초기화 (CE 버전 반영)
+      buffer = [];
     }
 
     console.log(
       `${payload.datasetType}: Total ${totalCount.toLocaleString()} rows inserted.`,
     );
   } catch (err) {
-    // ce3b39d 커밋에서 의도한 에러 핸들링 보강
     console.error(`[Error] ${payload.datasetType} insertion failed:`, err);
-    throw err; // 상위 워커로 에러 전파해서 태스크 실패 처리하게 함
+    throw err;
   }
 };
 

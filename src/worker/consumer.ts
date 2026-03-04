@@ -1,7 +1,12 @@
 import { parentPort } from "node:worker_threads";
 import type { MysqlCommand } from "../db/mysql/commands.js";
 import type { RedisDatabase } from "../db/redis.js";
-import { isValidTask, type Task, TaskName, type DownloadPayload } from "./types.js";
+import {
+  isValidTask,
+  type Task,
+  TaskName,
+  type DownloadPayload,
+} from "./types.js";
 import { ConsumerCommand, WorkerResponseType } from "./messages.js";
 import { handleDownloadTask, handleParseTask } from "./handlers.js";
 
@@ -29,7 +34,7 @@ export class TaskConsumer {
     redis: RedisDatabase,
     batchId: string,
     mysqlCommand: MysqlCommand,
-    config: TaskConfig
+    config: TaskConfig,
   ) {
     this.redis = redis.getClient();
     this.mysqlCommand = mysqlCommand;
@@ -56,7 +61,10 @@ export class TaskConsumer {
       try {
         if (!this.isRunning) break;
 
-        const taskElements = await this.redis.lPopCount(this.mainQueue, availableSlots);
+        const taskElements = await this.redis.lPopCount(
+          this.mainQueue,
+          availableSlots,
+        );
 
         if (!taskElements || taskElements.length === 0) {
           const idleData = await this.redis.blPop(this.mainQueue, 1);
@@ -143,7 +151,7 @@ export class TaskConsumer {
             this.batchId,
             task.taskId,
             task.payload as DownloadPayload,
-            this.redis
+            this.redis,
           );
 
           if (parentPort) {
@@ -162,7 +170,11 @@ export class TaskConsumer {
         case TaskName.PARSE_SECONDARY:
           console.log(`[consumer] processing ${task.name}: ${task.taskId}`);
 
-          const parseResult = await handleParseTask(this.batchId, task, this.mysqlCommand);
+          const parseResult = await handleParseTask(
+            this.batchId,
+            task,
+            this.mysqlCommand,
+          );
 
           if (parentPort) {
             parentPort.postMessage({
