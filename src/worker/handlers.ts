@@ -5,7 +5,6 @@ import { downloadFile } from "../utils/download.js";
 import { getDatasetInfoByFileName } from "../utils/helpers.js";
 import { createClient } from "redis";
 import type { MysqlCommand } from "../db/mysql/commands.js";
-import { generateTSVlines } from "../utils/parse.js";
 import type {
   DatasetKey,
   DatasetType,
@@ -36,7 +35,6 @@ export const handleDownloadTask = async (
   }
 
   const hashKey = `file_hash:${path.basename(payload.targetPath)}`;
-
   const oldHash = await redisClient.get(hashKey);
 
   if (oldHash === hash) {
@@ -53,61 +51,16 @@ export const handleDownloadTask = async (
 
   return {
     batchId: batchId,
-    taskId: `${batchId}:parse_${taskId}`, // need to create unique id
+    taskId: `${batchId}:parse_${taskId}`,
     name: info.isPrimary ? TaskName.PARSE_PRIMARY : TaskName.PARSE_SECONDARY,
     payload: {
       filePath: outPath,
       datasetType: info.type,
-      skip: oldHash == hash,
+      skip: oldHash === hash,
     },
     retryCount: 0,
     createdAt: Date.now(),
   };
-};
-
-export const handleParseAndInsert = async (
-  batchId: string,
-  taskId: string,
-  payload: ParsePayload,
-  mysqlCmd: MysqlCommand,
-  batchSize: number,
-) => {
-  if (payload.skip) {
-    console.log(`skipping insert: ${payload.datasetType}`);
-    return;
-  }
-
-  let totalCount = 0;
-  let buffer = [];
-
-  try {
-    for await (const row of generateTSVlines(payload.filePath)) {
-      buffer.push(row);
-      if (buffer.length >= batchSize) {
-        await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
-        totalCount += buffer.length;
-        if (totalCount % 100000 === 0) {
-          console.log(
-            `${payload.datasetType}: ${totalCount.toLocaleString()} rows inserted...`,
-          );
-        }
-        buffer = [];
-      }
-    }
-
-    if (buffer.length > 0) {
-      await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
-      totalCount += buffer.length;
-      buffer = [];
-    }
-
-    console.log(
-      `${payload.datasetType}: Total ${totalCount.toLocaleString()} rows inserted.`,
-    );
-  } catch (err) {
-    console.error(`[Error] ${payload.datasetType} insertion failed:`, err);
-    throw err;
-  }
 };
 
 const insertByDatasetType = async (

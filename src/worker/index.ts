@@ -1,187 +1,124 @@
+import { Worker } from "node:worker_threads";
 import {
-  type Task,
-  isValidTask,
-  TaskName,
-  type DownloadPayload,
-  type ParsePayload,
-} from "./types.js";
-import { RedisDB } from "../db/index.js";
-import { handleDownloadTask, handleParseAndInsert } from "./handlers.js";
-import type { MysqlCommand } from "../db/mysql/commands.js";
-import { isPrimary } from "../utils/helpers.js";
+  ConsumerCommand,
+  ProducerCommand,
+  WorkerResponseType,
+  type WorkerResponsePayload,
+} from "./messages.js";
+import { TaskName } from "./types.js";
+import type { DatasetKey } from "../utils/types.js";
+import type { Tconfig } from "../config/index.js";
 
-interface TaskConfig {
-  mainQueue: string;
-  holdQueue: string;
-  primaryDoneKey: string;
-  maxWorkers: number;
-  maxRetry: number;
-  primaryCount: number;
-  batchSize: number;
+interface PipelineConfig {
+  batchId: string;
+  config: Tconfig;
+  consumerCount?: number;
 }
 
-export class TaskRunner {
-  private readonly maxWorkers: number;
-  private readonly maxRetry: number;
-  private readonly mainQueue: string;
-  private readonly holdQueue: string;
-  private readonly primaryDoneKey: string;
-  private readonly primaryCount: number;
-  private readonly batchSize: number;
-  private isRunning = false;
+export const runPipeline = async ({
+  batchId,
+  config,
+  consumerCount = 8,
+}: PipelineConfig) => {
+  const workers: Worker[] = [];
+  let totalInserted = 0;
+  let isDownloadStarted = false;
+  let finishedConsumers = 0;
 
-  private readonly batchId;
-  private readonly redis;
-  private readonly mysql;
-  private workers: Promise<unknown>[] = [];
+  return new Promise<{ totalInserted: number }>((resolve, reject) => {
+    const producerWorker = new Worker(
+      new URL("./produce.worker.js", import.meta.url),
+      { workerData: { batchId, config } },
+    );
 
-  constructor(redis: typeof RedisDB, mysql: MysqlCommand, config: TaskConfig) {
-    this.redis = redis.getClient();
-    this.mysql = mysql;
-    this.batchId = crypto.randomUUID();
+    producerWorker.on("error", (err) => {
+      console.error("[producer error]", err);
+      reject(err);
+    });
 
-    this.maxWorkers = config.maxWorkers;
-    this.maxRetry = config.maxRetry;
-    this.mainQueue = `${config.mainQueue}:${this.batchId}`;
-    this.holdQueue = `${config.holdQueue}:${this.batchId}`;
-    this.primaryDoneKey = `${config.primaryDoneKey}:${this.batchId}`;
-    this.primaryCount = config.primaryCount;
-    this.batchSize = config.batchSize;
-  }
+    for (let i = 0; i < consumerCount; i++) {
+      const consumerWorker = new Worker(
+        new URL("./consumer.worker.js", import.meta.url),
+        { workerData: { batchId, config } },
+      );
 
-  getBatchId() {
-    return this.batchId;
-  }
+      consumerWorker.postMessage({ type: ConsumerCommand.START });
 
-  async pushTask(task: Task) {
-    await this.redis.lPush(this.mainQueue, JSON.stringify(task));
-  }
+      consumerWorker.on("message", (msg: WorkerResponsePayload) => {
+        switch (msg.type) {
+          case WorkerResponseType.READY:
+            console.log(`[main] consumer ${i} ready`);
 
-  async start() {
-    this.isRunning = true;
+            if (!isDownloadStarted) {
+              producerWorker.postMessage({
+                type: ProducerCommand.PRODUCE_DOWNLOAD,
+              });
+              isDownloadStarted = true;
+            }
+            break;
 
-    while (this.isRunning) {
-      if (this.workers.length >= this.maxWorkers) {
-        await Promise.race(this.workers);
-        continue;
-      }
+          case WorkerResponseType.DONE:
+            const taskResult = msg.payload as any;
 
-      try {
-        if (!this.isRunning) break;
-
-        const taskData = await this.redis.blPop(this.mainQueue, 1);
-
-        if (!this.isRunning || !taskData) continue;
-
-        const taskPromise = this.executeTask(taskData.element).finally(() => {
-          this.workers = this.workers.filter((p) => p !== taskPromise);
-        });
-
-        this.workers.push(taskPromise);
-      } catch (err) {
-        if (!this.isRunning) break;
-        console.error(`Queue Error: ${(err as Error).message}`);
-      }
-    }
-
-    if (this.workers.length > 0) {
-      console.log(`waiting for ${this.workers.length} workers to finish...`);
-      await Promise.allSettled(this.workers);
-    }
-
-    console.log("task runner stopped safely");
-  }
-
-  stop() {
-    this.isRunning = false;
-  }
-
-  async executeTask(taskElement: string) {
-    let task: Task | null = null;
-
-    try {
-      task = JSON.parse(taskElement);
-
-      if (!isValidTask(task)) {
-        console.error(`invalid task data: ${taskElement}`);
-        return; // throw error?
-      }
-
-      switch (task.name) {
-        case TaskName.DOWNLOAD:
-          const nextTask = await handleDownloadTask(
-            this.batchId,
-            task.taskId,
-            task.payload as DownloadPayload,
-            this.redis,
-          ); // task 타입 가드에서 payload까지 체크해서 괜찮다
-
-          const datasetType = nextTask.payload.datasetType;
-
-          const primary = isPrimary(datasetType);
-
-          if (primary) {
-            await this.redis.rPush(this.mainQueue, JSON.stringify(nextTask));
-          } else {
-            await this.redis.rPush(this.holdQueue, JSON.stringify(nextTask));
-          }
-
-          break;
-
-        case TaskName.PARSE_PRIMARY:
-          await handleParseAndInsert(
-            this.batchId,
-            task.taskId,
-            task.payload as ParsePayload,
-            this.mysql,
-            this.batchSize,
-          );
-
-          const completedCount = await this.redis.hIncrBy(
-            `batch:${this.batchId}`,
-            this.primaryDoneKey,
-            1,
-          );
-
-          if (completedCount === this.primaryCount) {
-            console.log("parse primary phase done, moving on to second phase");
-
-            while (true) {
-              const task = await this.redis.rPopLPush(
-                this.holdQueue,
-                this.mainQueue,
-              );
-              if (!task) break;
+            if (msg.command === TaskName.DOWNLOAD) {
+              producerWorker.postMessage({
+                type: ProducerCommand.PRODUCE_PARSE_PRIMARY,
+                payload: {
+                  filePath: taskResult.payload.filePath,
+                  datasetType: taskResult.payload.datasetType,
+                  isPrimary: taskResult.name === TaskName.PARSE_PRIMARY,
+                },
+              });
             }
 
-            await this.redis.del(this.holdQueue);
-          }
+            if (
+              msg.command === TaskName.PARSE_PRIMARY ||
+              msg.command === TaskName.PARSE_SECONDARY ||
+              msg.command === TaskName.INSERT_DATA
+            ) {
+              const result = msg.payload as {
+                count: number;
+                datasetType: DatasetKey;
+              };
+              totalInserted += result.count;
 
-          break;
+              if (totalInserted % 100000 === 0) {
+                console.log(
+                  `[main] progress: ${totalInserted.toLocaleString()} rows inserted`,
+                );
+              }
+            }
 
-        case TaskName.PARSE_SECONDARY:
-          await handleParseAndInsert(
-            this.batchId,
-            task.taskId,
-            task.payload as ParsePayload,
-            this.mysql,
-            this.batchSize,
-          );
+            if (taskResult?.phase) {
+              finishedConsumers++;
 
-          break;
-        default:
-          console.warn(`unknown task name: ${task.name}`);
-      }
-    } catch (err) {
-      console.error(`Task Error: ${(err as Error).message}`);
+              if (finishedConsumers === consumerCount) {
+                console.log("[main] all consumers finished");
 
-      if (task && task.retryCount <= this.maxRetry) {
-        task.retryCount++;
-        await this.redis.rPush(this.mainQueue, JSON.stringify(task));
-      } else {
-        console.error(`task failed with max retry`);
-        // TODO: 따로 실패 기록 저장해두고 나중에 다시 하던지 하기
-      }
+                producerWorker.postMessage({
+                  type: ProducerCommand.SHUTDOWN,
+                });
+
+                workers.forEach((w) =>
+                  w.postMessage({ type: ConsumerCommand.TERMINATE }),
+                );
+
+                resolve({ totalInserted });
+              }
+            }
+            break;
+
+          case WorkerResponseType.ERROR:
+            console.error(`[consumer ${i} error]: ${msg.error}`);
+            break;
+        }
+      });
+
+      consumerWorker.on("error", (err) => {
+        console.error(`[consumer ${i} error]`, err);
+      });
+
+      workers.push(consumerWorker);
     }
-  }
-}
+  });
+};
