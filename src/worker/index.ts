@@ -7,22 +7,54 @@ import {
 } from "./types.js";
 import { RedisDB } from "../db/index.js";
 import { handleParseAndInsert, hanldeDownloadTask } from "./handlers.js";
+import type { MysqlCommand } from "../db/mysql/commands.js";
+import { isPrimary } from "../utils/helpers.js";
+
+export interface TaskConfig {
+  mainQueue: string;
+  holdQueue: string;
+  primaryDoneKey: string;
+  maxWorkers: number;
+  maxRetry: number;
+  primaryCount: number;
+  batchSize: number;
+}
 
 export class TaskRunner {
-  private readonly maxWorkers = 10; // TODO: 설정 받아서 거기서 가져오기
-  private readonly maxRetry = 3; // TODO: 설정 받아서 거기서 가져오기
-  private readonly queueName = "q_name"; // TODO: 설정 받아서 거기서 가져오기
+  private readonly maxWorkers: number;
+  private readonly maxRetry: number;
+  private readonly mainQueue: string;
+  private readonly holdQueue: string;
+  private readonly primaryDoneKey: string;
+  private readonly primaryCount: number;
+  private readonly batchSize: number;
   private isRunning = false;
 
+  private readonly batchId;
   private readonly redis;
+  private readonly mysql;
   private workers: Promise<unknown>[] = [];
 
-  constructor(redis: typeof RedisDB) {
+  constructor(redis: typeof RedisDB, mysql: MysqlCommand, config: TaskConfig) {
     this.redis = redis.getClient();
+    this.mysql = mysql;
+    this.batchId = crypto.randomUUID();
+
+    this.maxWorkers = config.maxWorkers;
+    this.maxRetry = config.maxRetry;
+    this.mainQueue = `${config.mainQueue}:${this.batchId}`;
+    this.holdQueue = `${config.holdQueue}:${this.batchId}`;
+    this.primaryDoneKey = `${config.primaryDoneKey}:${this.batchId}`;
+    this.primaryCount = config.primaryCount;
+    this.batchSize = config.batchSize;
+  }
+
+  getBatchId() {
+    return this.batchId;
   }
 
   async pushTask(task: Task) {
-    await this.redis.lPush(this.queueName, JSON.stringify(task));
+    await this.redis.lPush(this.mainQueue, JSON.stringify(task));
   }
 
   async start() {
@@ -37,7 +69,7 @@ export class TaskRunner {
       try {
         if (!this.isRunning) break;
 
-        const taskData = await this.redis.blPop(this.queueName, 1);
+        const taskData = await this.redis.blPop(this.mainQueue, 1);
 
         if (!this.isRunning || !taskData) continue;
 
@@ -78,16 +110,63 @@ export class TaskRunner {
       switch (task.name) {
         case TaskName.DOWNLOAD:
           const nextTask = await hanldeDownloadTask(
-            task.id,
+            this.batchId,
+            task.taskId,
             task.payload as DownloadPayload,
+            this.redis,
           ); // task 타입 가드에서 payload까지 체크해서 괜찮다
 
-          await this.redis.rPush(this.queueName, JSON.stringify(nextTask));
+          const datasetType = nextTask.payload.datasetType;
+          const primary = isPrimary(datasetType);
+
+          if (primary) {
+            await this.redis.rPush(this.mainQueue, JSON.stringify(nextTask));
+          } else {
+            await this.redis.rPush(this.holdQueue, JSON.stringify(nextTask));
+          }
 
           break;
 
-        case TaskName.PARSE_AND_INSERT:
-          await handleParseAndInsert(task.id, task.payload as ParsePayload);
+        case TaskName.PARSE_PRIMARY:
+          await handleParseAndInsert(
+            this.batchId,
+            task.taskId,
+            task.payload as ParsePayload,
+            this.mysql,
+            this.batchSize,
+          );
+
+          const completedCount = await this.redis.hIncrBy(
+            `batch:${this.batchId}`,
+            this.primaryDoneKey,
+            1,
+          );
+
+          if (completedCount === this.primaryCount) {
+            console.log("parse primary phase done, moving on to second phase");
+
+            while (true) {
+              const task = await this.redis.rPopLPush(
+                this.holdQueue,
+                this.mainQueue,
+              );
+              if (!task) break;
+            }
+
+            await this.redis.del(this.holdQueue);
+          }
+
+          break;
+
+        case TaskName.PARSE_SECONDARY:
+          await handleParseAndInsert(
+            this.batchId,
+            task.taskId,
+            task.payload as ParsePayload,
+            this.mysql,
+            this.batchSize,
+          );
+
           break;
         default:
           console.warn(`unknown task name: ${task.name}`);
@@ -97,7 +176,7 @@ export class TaskRunner {
 
       if (task && task.retryCount <= this.maxRetry) {
         task.retryCount++;
-        await this.redis.rPush(this.queueName, JSON.stringify(task));
+        await this.redis.rPush(this.mainQueue, JSON.stringify(task));
       } else {
         console.error(`task failed with max retry`);
         // TODO: 따로 실패 기록 저장해두고 나중에 다시 하던지 하기

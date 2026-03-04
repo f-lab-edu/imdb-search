@@ -1,31 +1,35 @@
-import { TaskRunner } from "./index.js";
-import { TaskName, type ParsePayload, type Task } from "./types.js";
-import { RedisDB, MysqlDB, OpenSearchDB } from "../db/index.js";
+import path from "node:path";
+import dotenv from "dotenv";
+
+dotenv.config({ path: ".env.dev" });
 
 (async () => {
-  const tr = new TaskRunner(RedisDB);
+  const { MysqlDB, RedisDB, OpenSearchDB, MysqlCommand } = await import("../db/index.js");
+  const { TaskRunner } = await import("./index.js");
+  const { config } = await import("../config/index.js");
+  const { TaskName } = await import("./types.js");
+
+  const tr = new TaskRunner(RedisDB, MysqlCommand, config.task);
 
   try {
     await RedisDB.ping();
 
-    const runnerPromise = tr.start();
-
-    for (let i = 0; i < 20; i++) {
-      const testTask: Task<ParsePayload> = {
-        id: `taskid_${i}`,
-        name: TaskName.PARSE_AND_INSERT,
-        payload: { filePath: `filepath_${i}` },
+    // push download tasks
+    for (const file of config.datasets.files) {
+      await tr.pushTask({
+        batchId: tr.getBatchId(),
+        taskId: crypto.randomUUID(),
+        name: TaskName.DOWNLOAD,
+        payload: {
+          url: config.datasets.baseUrl + file.name,
+          targetPath: path.join(config.datasets.downloadDir, file.name),
+        },
         retryCount: 0,
         createdAt: Date.now(),
-      };
-
-      await tr.pushTask(testTask);
+      });
     }
 
-    await new Promise((res) => setTimeout(res, 3000));
-
-    tr.stop();
-
+    const runnerPromise = tr.start();
     await runnerPromise;
   } catch (err) {
     console.error(`error occured: ${err}`);

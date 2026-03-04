@@ -1,29 +1,136 @@
+import path from "node:path";
 import type { DownloadPayload, ParsePayload, Task } from "./types.js";
 import { TaskName } from "./types.js";
 import { downloadFile } from "../utils/download.js";
+import { getDatasetInfoByFileName } from "../utils/helpers.js";
+import { createClient } from "redis";
+import type { MysqlCommand } from "../db/mysql/commands.js";
+import { generateTSVlines } from "../utils/parse.js";
+import type {
+  DatasetKey,
+  DatasetType,
+  NameBasics,
+  TitleAkas,
+  TitleBasics,
+  TitleCrew,
+  TitleEpisode,
+  TitlePrincipals,
+  TitleRatings,
+} from "../utils/types.js";
 
+// TODO: 해시 겹칠 때 처리 필요
 export const hanldeDownloadTask = async (
+  batchId: string,
   taskId: string,
   payload: DownloadPayload,
+  redisClient: ReturnType<typeof createClient>,
 ): Promise<Task<ParsePayload>> => {
-  const savedPath = await downloadFile(payload.targetPath, payload.url);
+  const { outPath, hash } = await downloadFile(payload.targetPath, payload.url);
+  const info = getDatasetInfoByFileName(path.basename(payload.targetPath));
+
+  console.log(`downloading ${path.basename(outPath)}`);
+
+  if (!info) {
+    throw new Error(
+      `unknown dataset file: ${path.basename(payload.targetPath)}, check your dataset config`,
+    );
+  }
+
+  const hashKey = `file_hash:${path.basename(payload.targetPath)}`;
+
+  const oldHash = await redisClient.get(hashKey);
+
+  if (oldHash === hash) {
+    console.log(`${path.basename(outPath)}: hash match: skip enabled`);
+  } else {
+    console.log(
+      `${path.basename(outPath)}: New file or hash changed. Parsing required.`,
+    );
+  }
+
+  await redisClient.set(hashKey, hash);
+
+  console.log(`successfully downloaded ${outPath}`);
 
   return {
-    id: `parse_${taskId}`, // need to create unique id
-    name: TaskName.PARSE_AND_INSERT,
-    payload: { filePath: savedPath },
+    batchId: batchId,
+    taskId: `${batchId}:parse_${taskId}`, // need to create unique id
+    name: info.isPrimary ? TaskName.PARSE_PRIMARY : TaskName.PARSE_SECONDARY,
+    payload: {
+      filePath: outPath,
+      datasetType: info.type,
+      skip: oldHash == hash,
+    },
     retryCount: 0,
     createdAt: Date.now(),
   };
 };
 
-// TODO: this is for test only, need to implement proper logics
 export const handleParseAndInsert = async (
+  batchId: string,
   taskId: string,
   payload: ParsePayload,
+  mysqlCmd: MysqlCommand,
+  batchSize: number,
 ) => {
-  console.log(`task id: ${taskId}`);
-  console.log(`file path: ${payload.filePath}`);
+  if (payload.skip) {
+    console.log(`skipping insert: ${payload.datasetType}`);
+    return;
+  }
 
-  return new Promise((res) => setTimeout(res, 500));
+  let totalCount = 0;
+  let buffer = [];
+
+  try {
+    for await (const row of generateTSVlines(payload.filePath)) {
+      buffer.push(row);
+      if (buffer.length >= batchSize) {
+        await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
+        totalCount += buffer.length;
+        if (totalCount % 100000 === 0) {
+          console.log(
+            `${payload.datasetType}: ${totalCount.toLocaleString()} rows inserted...`,
+          );
+        }
+        buffer = [];
+      }
+    }
+    if (buffer.length > 0) {
+      await insertByDatasetType(mysqlCmd, payload.datasetType, buffer);
+      totalCount += buffer.length;
+    }
+    console.log(
+      `${payload.datasetType}: Total ${totalCount.toLocaleString()} rows inserted.`,
+    );
+  } catch (err) {
+    console.error(
+      `${payload.datasetType}: Failed after ${totalCount.toLocaleString()} rows: ${(err as Error).message}`,
+    );
+    throw err;
+  }
+};
+
+const insertByDatasetType = async (
+  mysqlCmd: MysqlCommand,
+  key: DatasetKey,
+  data: DatasetType[],
+) => {
+  switch (key) {
+    case "TITLE_BASICS":
+      return await mysqlCmd.insertTitleBasics(data as TitleBasics[]);
+    case "NAME_BASICS":
+      return await mysqlCmd.insertNameBasics(data as NameBasics[]);
+    case "TITLE_AKAS":
+      return await mysqlCmd.insertTitleAkas(data as TitleAkas[]);
+    case "TITLE_CREW":
+      return await mysqlCmd.insertTitleCrew(data as TitleCrew[]);
+    case "TITLE_EPISODE":
+      return await mysqlCmd.insertTitleEpisodes(data as TitleEpisode[]);
+    case "TITLE_PRINCIPAL":
+      return await mysqlCmd.insertTitlePrincipals(data as TitlePrincipals[]);
+    case "TITLE_RATINGS":
+      return await mysqlCmd.insertTitleRatings(data as TitleRatings[]);
+    default:
+      throw new Error(`received invalid dataset key: ${key}`);
+  }
 };

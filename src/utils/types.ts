@@ -1,3 +1,5 @@
+import type { Tconfig } from "../config/index.js";
+
 const TableNamesArr = [
   "TITLES",
   "GENRES",
@@ -11,6 +13,8 @@ const TableNamesArr = [
 ] as const;
 
 export type TableName = (typeof TableNamesArr)[number];
+
+export type DatasetKey = Tconfig["datasets"]["files"][number]["type"];
 
 export type DatasetType =
   | TitleBasics
