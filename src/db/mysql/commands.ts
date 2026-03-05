@@ -98,7 +98,7 @@ export class MysqlCommand {
       const values = data.map((row) => keys.map((k) => row[k]));
 
       await conn.query(
-        `INSERT INTO ${tableName} (${keys.join(",")}) VALUES ?`,
+        `INSERT IGNORE INTO ${tableName} (${keys.join(",")}) VALUES ?`,
         [values],
       );
 

@@ -1,4 +1,5 @@
-import { parentPort } from "node:worker_threads";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { MysqlCommand } from "../db/mysql/commands.js";
 import type { RedisDatabase } from "../db/redis.js";
 import {
@@ -7,8 +8,12 @@ import {
   TaskName,
   type DownloadPayload,
 } from "./types.js";
-import { ConsumerCommand, WorkerResponseType } from "./messages.js";
-import { handleDownloadTask, handleParseTask } from "./handlers.js";
+import {
+  handleDownloadTask,
+  handleParseTask,
+  handleSecondaryParseTask,
+} from "./handlers.js";
+import type { ParsePayload } from "./types.js";
 
 export interface TaskConfig {
   mainQueue: string;
@@ -16,6 +21,11 @@ export interface TaskConfig {
   primaryDoneKey: string;
   maxWorkers: number;
   maxRetry: number;
+}
+
+export interface TaskResult {
+  taskName: TaskName;
+  payload: unknown;
 }
 
 export class TaskConsumer {
@@ -46,7 +56,7 @@ export class TaskConsumer {
     this.mainQueue = `${config.mainQueue}:${this.batchId}`;
   }
 
-  async start() {
+  async start(onTaskDone?: (result: TaskResult) => void) {
     this.isRunning = true;
     console.log(`[Consumer] started with maxWorkers: ${this.maxWorkers}`);
 
@@ -68,14 +78,16 @@ export class TaskConsumer {
 
         if (!taskElements || taskElements.length === 0) {
           const idleData = await this.redis.blPop(this.mainQueue, 1);
-          if (!idleData) continue; // 1초 대기 후 다시 루프
+          if (!idleData) continue;
           taskElements?.push(idleData.element);
         }
 
         for (const element of taskElements || []) {
-          const taskPromise = this.executeTask(element).finally(() => {
-            this.workers = this.workers.filter((p) => p !== taskPromise);
-          });
+          const taskPromise = this.executeTask(element, onTaskDone).finally(
+            () => {
+              this.workers = this.workers.filter((p) => p !== taskPromise);
+            },
+          );
           this.workers.push(taskPromise);
         }
       } catch (err) {
@@ -86,53 +98,25 @@ export class TaskConsumer {
     }
 
     if (this.workers.length > 0) {
-      console.log(`[Consumer] Finalizing ${this.workers.length} tasks...`);
+      console.log(`[consumer] Finalizing ${this.workers.length} tasks...`);
       await Promise.allSettled(this.workers);
     }
 
-    console.log("Task runner stopped safely.");
+    console.log("[consumer] Task consumer stopped safely.");
   }
-
-  // async start() {
-  //   this.isRunning = true;
-  //
-  //   while (this.isRunning) {
-  //     if (this.workers.length >= this.maxWorkers) {
-  //       await Promise.race(this.workers);
-  //       continue;
-  //     }
-  //
-  //     try {
-  //       if (!this.isRunning) break;
-  //
-  //       const taskData = await this.redis.blPop(this.mainQueue, 1);
-  //
-  //       if (!this.isRunning || !taskData) continue;
-  //
-  //       const taskPromise = this.executeTask(taskData.element).finally(() => {
-  //         this.workers = this.workers.filter((p) => p !== taskPromise);
-  //       });
-  //
-  //       this.workers.push(taskPromise);
-  //     } catch (err) {
-  //       if (!this.isRunning) break;
-  //       console.error(`Queue Error: ${(err as Error).message}`);
-  //     }
-  //   }
-  //
-  //   if (this.workers.length > 0) {
-  //     console.log(`waiting for ${this.workers.length} workers to finish...`);
-  //     await Promise.allSettled(this.workers);
-  //   }
-  //
-  //   console.log("task runner stopped safely");
-  // }
 
   stop() {
     this.isRunning = false;
   }
 
-  async executeTask(taskElement: string) {
+  get activeCount() {
+    return this.workers.length;
+  }
+
+  async executeTask(
+    taskElement: string,
+    onTaskDone?: (result: TaskResult) => void,
+  ) {
     let task: Task | null = null;
 
     try {
@@ -140,7 +124,7 @@ export class TaskConsumer {
 
       if (!isValidTask(task)) {
         console.error(`invalid task data: ${taskElement}`);
-        return; // throw error?
+        return;
       }
 
       switch (task.name) {
@@ -154,20 +138,11 @@ export class TaskConsumer {
             this.redis,
           );
 
-          if (parentPort) {
-            parentPort.postMessage({
-              type: WorkerResponseType.DONE,
-              workerType: "CONSUMER",
-              command: TaskName.DOWNLOAD,
-              payload: result,
-            });
-          }
-
+          onTaskDone?.({ taskName: TaskName.DOWNLOAD, payload: result });
           break;
 
         case TaskName.INSERT_DATA:
         case TaskName.PARSE_PRIMARY:
-        case TaskName.PARSE_SECONDARY:
           console.log(`[consumer] processing ${task.name}: ${task.taskId}`);
 
           const parseResult = await handleParseTask(
@@ -176,15 +151,19 @@ export class TaskConsumer {
             this.mysqlCommand,
           );
 
-          if (parentPort) {
-            parentPort.postMessage({
-              type: WorkerResponseType.DONE,
-              workerType: "CONSUMER",
-              command: task.name,
-              payload: parseResult, // { count: 1000, datasetType: "..." }
-            });
-          }
+          onTaskDone?.({ taskName: task.name, payload: parseResult });
+          break;
 
+        case TaskName.PARSE_SECONDARY:
+          console.log(`[consumer] processing ${task.name}: ${task.taskId}`);
+
+          const secondaryResult = await handleSecondaryParseTask(
+            task as Task<ParsePayload>,
+            this.mainQueue,
+            this.redis,
+          );
+
+          onTaskDone?.({ taskName: task.name, payload: secondaryResult });
           break;
 
         default:
@@ -197,8 +176,16 @@ export class TaskConsumer {
         task.retryCount++;
         await this.redis.rPush(this.mainQueue, JSON.stringify(task));
       } else {
-        console.error(`task failed with max retry`);
-        // TODO: 따로 실패 기록 저장해두고 나중에 다시 하던지 하기
+        console.error(`task failed with max retry: ${task?.taskId}`);
+        const logPath = path.join(process.cwd(), "failed-tasks.jsonl");
+        await fs.appendFile(
+          logPath,
+          JSON.stringify({
+            task,
+            error: (err as Error).message,
+            failedAt: new Date().toISOString(),
+          }) + "\n",
+        );
       }
     }
   }

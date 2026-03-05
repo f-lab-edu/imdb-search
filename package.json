@@ -8,10 +8,13 @@
   },
   "scripts": {
     "dev": "tsx src/index.ts",
+    "clean": "rm -rf dist",
+    "build": "tsc && cp src/db/mysql/schema.sql dist/db/mysql/schema.sql",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest --detectOpenHandles",
     "test:db": "npm test -- tests/db/",
     "test:utils": "npm test -- tests/utils/",
-    "test:task": "npm test -- tests/workers/"
+    "test:task": "npm test -- tests/worker/",
+    "test:worker": "npm run build && NODE_OPTIONS='--experimental-vm-modules' jest --detectOpenHandles dist/tests/worker/"
   },
   "repository": {
     "type": "git",

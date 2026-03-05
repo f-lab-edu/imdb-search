@@ -1,7 +1,12 @@
 import path from "node:path";
 import type { Tconfig } from "../config/index.js";
 import { generateTSVlines } from "../utils/parse.js";
-import type { DatasetType, TitleBasics, NameBasics, DatasetKey } from "../utils/types.js";
+import type {
+  DatasetType,
+  TitleBasics,
+  NameBasics,
+  DatasetKey,
+} from "../utils/types.js";
 import { TaskName, type InsertPayload, type Task } from "./types.js";
 import type { RedisDatabase } from "../db/redis.js";
 
@@ -20,7 +25,7 @@ export class TaskProducer {
     private readonly redis: RedisDatabase,
     private readonly taskCfg: Tconfig["task"],
     private readonly datasetCfg: Tconfig["datasets"],
-    private readonly batchId: string
+    private readonly batchId: string,
   ) {
     this.mainQueue = `${this.taskCfg.mainQueue}:${this.batchId}`;
     this.holdQueue = `${this.taskCfg.holdQueue}:${this.batchId}`;
@@ -46,11 +51,15 @@ export class TaskProducer {
   }
 
   // phase1 task = store data from tsv into main db (mysql)
-  async producePhase1Task<T extends TitleBasics | NameBasics>(fileName: string) {
+  async producePhase1Task<T extends TitleBasics | NameBasics>(
+    fileName: string,
+  ) {
     const batch: T[] = [];
 
     const filePath = path.join(this.datasetCfg.downloadDir, fileName);
-    const datasetType = filePath.includes("title.basics") ? "TITLE_BASICS" : "NAME_BASICS";
+    const datasetType = filePath.includes("title.basics")
+      ? "TITLE_BASICS"
+      : "NAME_BASICS";
 
     try {
       for await (const lineData of generateTSVlines<T>(filePath)) {
@@ -63,28 +72,38 @@ export class TaskProducer {
             // create task and add it to redis queue
             const task: Task<InsertPayload<T>> = this.getInsertTaskFromBatch(
               datasetType,
-              currentBatch
+              currentBatch,
             );
 
             await this.redisClient
               .rPush(this.mainQueue, JSON.stringify(task))
               .catch((err) =>
-                console.error(`[redis error] failed to push batch: ${(err as Error).message}`)
+                console.error(
+                  `[redis error] failed to push batch: ${(err as Error).message}`,
+                ),
               );
           }
         } catch (lineErr) {
-          console.error(`[parsing error] skipping line in ${fileName}:`, lineErr);
+          console.error(
+            `[parsing error] skipping line in ${fileName}:`,
+            lineErr,
+          );
           continue;
         }
       }
 
       if (batch.length > 0) {
-        const task: Task<InsertPayload<T>> = this.getInsertTaskFromBatch(datasetType, batch);
+        const task: Task<InsertPayload<T>> = this.getInsertTaskFromBatch(
+          datasetType,
+          batch,
+        );
 
         await this.redisClient
           .rPush(this.mainQueue, JSON.stringify(task))
           .catch((err) =>
-            console.error(`[redis error] failed to push batch: ${(err as Error).message}`)
+            console.error(
+              `[redis error] failed to push batch: ${(err as Error).message}`,
+            ),
           );
       }
     } catch (err) {
@@ -93,29 +112,35 @@ export class TaskProducer {
   }
 
   async hold(datasetType: DatasetKey, filePath: string) {
+    await this.queueSecondary(datasetType, filePath, this.holdQueue);
+    console.log(`[producer] deferred task held: ${path.basename(filePath)}`);
+  }
+
+  async queueSecondary(datasetType: DatasetKey, filePath: string, queue = this.mainQueue) {
     const task = {
       batchId: this.batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.PARSE_SECONDARY,
       payload: {
         datasetType,
-        filePath,
+        filePath: path.join(this.datasetCfg.downloadDir, filePath),
       },
       retryCount: 0,
       createdAt: Date.now(),
     };
 
     try {
-      await this.redisClient.rPush(this.holdQueue, JSON.stringify(task));
-      console.log(`[producer] deferred task held: ${path.basename(filePath)}`);
+      await this.redisClient.rPush(queue, JSON.stringify(task));
     } catch (err) {
-      console.error(`[redis error] failed to hold task: ${(err as Error).message}`);
+      console.error(
+        `[redis error] failed to queue secondary task: ${(err as Error).message}`,
+      );
     }
   }
 
   private getInsertTaskFromBatch<T extends DatasetType>(
     datasetType: DatasetKey,
-    batch: T[]
+    batch: T[],
   ): Task<InsertPayload<T>> {
     return {
       batchId: this.batchId,

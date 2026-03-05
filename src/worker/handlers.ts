@@ -2,6 +2,7 @@ import path from "node:path";
 import type { DownloadPayload, ParsePayload, Task } from "./types.js";
 import { TaskName } from "./types.js";
 import { downloadFile } from "../utils/download.js";
+import { generateTSVlines } from "../utils/parse.js";
 import { getDatasetInfoByFileName } from "../utils/helpers.js";
 import { createClient } from "redis";
 import type { MysqlCommand } from "../db/mysql/commands.js";
@@ -86,6 +87,60 @@ const insertByDatasetType = async (
     default:
       throw new Error(`received invalid dataset key: ${key}`);
   }
+};
+
+export const handleSecondaryParseTask = async (
+  task: Task<ParsePayload>,
+  mainQueue: string,
+  redisClient: ReturnType<typeof createClient>,
+) => {
+  const { datasetType, filePath, skip } = task.payload;
+
+  if (skip) {
+    return { success: true, count: 0, skipped: true };
+  }
+
+  const batchSize = 1000;
+  const batch: DatasetType[] = [];
+  let totalQueued = 0;
+
+  try {
+    for await (const row of generateTSVlines<DatasetType>(filePath)) {
+      batch.push(row);
+
+      if (batch.length >= batchSize) {
+        const current = batch.splice(0, batchSize);
+        const insertTask: Task<{ datasetType: DatasetKey; data: DatasetType[] }> = {
+          batchId: task.batchId,
+          taskId: crypto.randomUUID(),
+          name: TaskName.INSERT_DATA,
+          payload: { datasetType, data: current },
+          retryCount: 0,
+          createdAt: Date.now(),
+        };
+        await redisClient.rPush(mainQueue, JSON.stringify(insertTask));
+        totalQueued += current.length;
+      }
+    }
+
+    if (batch.length > 0) {
+      const insertTask: Task<{ datasetType: DatasetKey; data: DatasetType[] }> = {
+        batchId: task.batchId,
+        taskId: crypto.randomUUID(),
+        name: TaskName.INSERT_DATA,
+        payload: { datasetType, data: batch },
+        retryCount: 0,
+        createdAt: Date.now(),
+      };
+      await redisClient.rPush(mainQueue, JSON.stringify(insertTask));
+      totalQueued += batch.length;
+    }
+  } catch (err) {
+    console.error(`[Parse Error] ${datasetType}: ${(err as Error).message}`);
+    throw err;
+  }
+
+  return { success: true, count: totalQueued, datasetType };
 };
 
 export const handleParseTask = async (

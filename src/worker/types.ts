@@ -1,5 +1,18 @@
 import type { DatasetKey } from "../utils/types.js";
 
+export interface TaskConfig {
+  mainQueue: string;
+  holdQueue: string;
+  primaryDoneKey: string;
+  maxWorkers: number;
+  maxRetry: number;
+}
+
+export interface TaskResult {
+  taskName: TaskName;
+  payload: unknown;
+}
+
 export enum TaskName {
   DOWNLOAD = "DOWNLOAD",
   PARSE_PRIMARY = "PARSE_PRIMARY",
@@ -57,7 +70,11 @@ export const isValidTask = (task: any): task is Task => {
 };
 
 const isDownloadPayload = (payload: any): payload is DownloadPayload => {
-  return payload && typeof payload.url === "string" && typeof payload.targetPath === "string";
+  return (
+    payload &&
+    typeof payload.url === "string" &&
+    typeof payload.targetPath === "string"
+  );
 };
 
 const isParsePayload = (payload: any): payload is ParsePayload => {
@@ -65,5 +82,9 @@ const isParsePayload = (payload: any): payload is ParsePayload => {
 };
 
 const isInsertPayload = (payload: any): payload is InsertPayload => {
-  return payload && typeof payload.datasetType === "string" && Array.isArray(payload.data);
+  return (
+    payload &&
+    typeof payload.datasetType === "string" &&
+    Array.isArray(payload.data)
+  );
 };
