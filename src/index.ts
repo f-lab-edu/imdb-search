@@ -19,7 +19,7 @@ try {
     skipDownload,
   });
   console.log(
-    `done. inserted: ${result.totalInserted.toLocaleString()}, batchId: ${result.batchId}`,
+    `done. inserted: ${result.totalInserted.toLocaleString()}, batchId: ${result.batchId}`
   );
 } finally {
   await redis.close();
