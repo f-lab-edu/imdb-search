@@ -1,3 +1,18 @@
+-- 0. 작업 큐 - Redis overflow 및 phase 관리용
+CREATE TABLE IF NOT EXISTS TASKS(
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_id     VARCHAR(36) NOT NULL UNIQUE,
+    batch_id   VARCHAR(36) NOT NULL,
+    name       VARCHAR(50) NOT NULL,
+    phase      TINYINT NOT NULL DEFAULT 1,
+    payload    JSON NOT NULL,
+    status     ENUM('pending', 'queued', 'failed') NOT NULL DEFAULT 'pending',
+    retry_count TINYINT NOT NULL DEFAULT 0,
+    created_at BIGINT NOT NULL,
+    INDEX idx_status_phase (status, phase),
+    INDEX idx_batch_id (batch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 1. 장르 - title.basics.tsv.gz
 CREATE TABLE IF NOT EXISTS GENRES(
     id INT AUTO_INCREMENT PRIMARY KEY,

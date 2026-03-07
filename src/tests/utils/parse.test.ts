@@ -3,11 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { generateTSVlines } from "../../utils/parse.js";
-import type {
-  TitleBasics,
-  NameBasics,
-  TitleRatings,
-} from "../../utils/types.js";
+import type { TitleBasics, NameBasics, TitleRatings } from "../../utils/types.js";
 
 let tmpDir: string;
 
@@ -98,11 +94,9 @@ describe("generateTSVlines", () => {
   });
 
   it("\\N 값은 null로 변환", async () => {
-    const tsv = [
-      "tconst\tstartYear\tendYear",
-      "tt0000001\t1894\t\\N",
-      "tt0000002\t\\N\t\\N",
-    ].join("\n");
+    const tsv = ["tconst\tstartYear\tendYear", "tt0000001\t1894\t\\N", "tt0000002\t\\N\t\\N"].join(
+      "\n"
+    );
 
     const filePath = await writeTSV("null_test.tsv", tsv);
     const results: any[] = [];

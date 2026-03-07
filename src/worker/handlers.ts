@@ -1,173 +1,143 @@
 import path from "node:path";
-import type { DownloadPayload, ParsePayload, Task } from "./types.js";
-import { TaskName } from "./types.js";
+import type { MysqlCommand } from "../db/index.js";
+import type { RedisDatabase } from "../db/redis.js";
 import { downloadFile } from "../utils/download.js";
-import { generateTSVlines } from "../utils/parse.js";
 import { getDatasetInfoByFileName } from "../utils/helpers.js";
-import { createClient } from "redis";
-import type { MysqlCommand } from "../db/mysql/commands.js";
-import type {
-  DatasetKey,
-  DatasetType,
-  NameBasics,
-  TitleAkas,
-  TitleBasics,
-  TitleCrew,
-  TitleEpisode,
-  TitlePrincipals,
-  TitleRatings,
-} from "../utils/types.js";
+import { generateTSVlines } from "../utils/parse.js";
+import type { DatasetType } from "../utils/types.js";
+import type { Producer } from "./producer.js";
+import {
+  TaskName,
+  TaskPhase,
+  type DownloadPayload,
+  type InsertPayload,
+  type ParsePayload,
+  type Task,
+  type TaskName as TaskNameType,
+} from "./types.js";
 
-export const handleDownloadTask = async (
-  batchId: string,
-  taskId: string,
-  payload: DownloadPayload,
-  redisClient: ReturnType<typeof createClient>,
-): Promise<Task<ParsePayload>> => {
-  const { outPath, hash } = await downloadFile(payload.targetPath, payload.url);
-  const info = getDatasetInfoByFileName(path.basename(payload.targetPath));
+export type TaskHandler = (task: Task) => Promise<void>;
+export type TaskHandlerMap = Partial<Record<TaskNameType, TaskHandler>>;
 
-  console.log(`downloading ${path.basename(outPath)}`);
-
-  if (!info) {
-    throw new Error(
-      `unknown dataset file: ${path.basename(payload.targetPath)}, check your dataset config`,
-    );
-  }
-
-  const hashKey = `file_hash:${path.basename(payload.targetPath)}`;
-  const oldHash = await redisClient.get(hashKey);
-
-  if (oldHash === hash) {
-    console.log(`${path.basename(outPath)}: hash match: skip enabled`);
-  } else {
-    console.log(
-      `${path.basename(outPath)}: New file or hash changed. Parsing required.`,
-    );
-  }
-
-  await redisClient.set(hashKey, hash);
-
-  console.log(`successfully downloaded ${outPath}`);
+export const createHandlers = (
+  redis: RedisDatabase,
+  mysqlCmd: MysqlCommand,
+  producer: Producer,
+  batchSize: number
+): TaskHandlerMap => {
+  const redisClient = redis.getClient();
 
   return {
-    batchId: batchId,
-    taskId: `${batchId}:parse_${taskId}`,
-    name: info.isPrimary ? TaskName.PARSE_PRIMARY : TaskName.PARSE_SECONDARY,
-    payload: {
-      filePath: outPath,
-      datasetType: info.type,
-      skip: oldHash === hash,
+    [TaskName.DOWNLOAD]: async (task: Task) => {
+      const { url, targetPath } = task.payload as DownloadPayload;
+      const { outPath, hash } = await downloadFile(targetPath, url);
+      const info = getDatasetInfoByFileName(path.basename(url));
+
+      if (!info) {
+        throw new Error(`unknown dataset file: ${path.basename(url)}`);
+      }
+
+      const hashKey = `file_hash:${path.basename(targetPath)}`;
+      const oldHash = await redisClient.get(hashKey);
+      await redisClient.set(hashKey, hash);
+
+      const skip = oldHash === hash;
+      if (skip) {
+        console.log(`[download] ${path.basename(outPath)}: hash match, skipping parse`);
+      } else {
+        console.log(`[download] ${path.basename(outPath)}: done`);
+      }
+
+      const phase = info.isPrimary ? TaskPhase.PRIMARY : TaskPhase.SECONDARY;
+      await producer.produce(
+        {
+          batchId: task.batchId,
+          taskId: crypto.randomUUID(),
+          name: info.isPrimary ? TaskName.PARSE_PRIMARY : TaskName.PARSE_SECONDARY,
+          payload: { filePath: outPath, datasetType: info.type, skip } satisfies ParsePayload,
+          retryCount: 0,
+          createdAt: Date.now(),
+        },
+        phase
+      );
     },
-    retryCount: 0,
-    createdAt: Date.now(),
+
+    [TaskName.PARSE_PRIMARY]: async (task: Task) => {
+      await handleParse(task, TaskPhase.PRIMARY, producer, batchSize);
+    },
+
+    [TaskName.PARSE_SECONDARY]: async (task: Task) => {
+      await handleParse(task, TaskPhase.SECONDARY, producer, batchSize);
+    },
+
+    [TaskName.INSERT_DATA]: async (task: Task) => {
+      const { datasetType, data } = task.payload as InsertPayload;
+      if (!data || data.length === 0) return;
+      await insertByDatasetType(mysqlCmd, datasetType, data as DatasetType[]);
+    },
   };
+};
+
+const handleParse = async (task: Task, phase: TaskPhase, producer: Producer, batchSize: number) => {
+  const { filePath, datasetType, skip } = task.payload as ParsePayload;
+  if (skip) return;
+
+  const batch: DatasetType[] = [];
+
+  for await (const row of generateTSVlines<DatasetType>(filePath)) {
+    batch.push(row);
+
+    if (batch.length >= batchSize) {
+      await producer.produce(
+        {
+          batchId: task.batchId,
+          taskId: crypto.randomUUID(),
+          name: TaskName.INSERT_DATA,
+          payload: { datasetType, data: batch.splice(0, batchSize) } satisfies InsertPayload,
+          retryCount: 0,
+          createdAt: Date.now(),
+        },
+        phase
+      );
+    }
+  }
+
+  if (batch.length > 0) {
+    await producer.produce(
+      {
+        batchId: task.batchId,
+        taskId: crypto.randomUUID(),
+        name: TaskName.INSERT_DATA,
+        payload: { datasetType, data: batch } satisfies InsertPayload,
+        retryCount: 0,
+        createdAt: Date.now(),
+      },
+      phase
+    );
+  }
 };
 
 const insertByDatasetType = async (
   mysqlCmd: MysqlCommand,
-  key: DatasetKey,
-  data: DatasetType[],
+  datasetType: string,
+  data: DatasetType[]
 ) => {
-  switch (key) {
+  switch (datasetType) {
     case "TITLE_BASICS":
-      return await mysqlCmd.insertTitleBasics(data as TitleBasics[]);
+      return mysqlCmd.insertTitleBasics(data as any);
     case "NAME_BASICS":
-      return await mysqlCmd.insertNameBasics(data as NameBasics[]);
+      return mysqlCmd.insertNameBasics(data as any);
     case "TITLE_AKAS":
-      return await mysqlCmd.insertTitleAkas(data as TitleAkas[]);
+      return mysqlCmd.insertTitleAkas(data as any);
     case "TITLE_CREW":
-      return await mysqlCmd.insertTitleCrew(data as TitleCrew[]);
+      return mysqlCmd.insertTitleCrew(data as any);
     case "TITLE_EPISODE":
-      return await mysqlCmd.insertTitleEpisodes(data as TitleEpisode[]);
+      return mysqlCmd.insertTitleEpisodes(data as any);
     case "TITLE_PRINCIPAL":
-      return await mysqlCmd.insertTitlePrincipals(data as TitlePrincipals[]);
+      return mysqlCmd.insertTitlePrincipals(data as any);
     case "TITLE_RATINGS":
-      return await mysqlCmd.insertTitleRatings(data as TitleRatings[]);
+      return mysqlCmd.insertTitleRatings(data as any);
     default:
-      throw new Error(`received invalid dataset key: ${key}`);
-  }
-};
-
-export const handleSecondaryParseTask = async (
-  task: Task<ParsePayload>,
-  mainQueue: string,
-  redisClient: ReturnType<typeof createClient>,
-) => {
-  const { datasetType, filePath, skip } = task.payload;
-
-  if (skip) {
-    return { success: true, count: 0, skipped: true };
-  }
-
-  const batchSize = 1000;
-  const batch: DatasetType[] = [];
-  let totalQueued = 0;
-
-  try {
-    for await (const row of generateTSVlines<DatasetType>(filePath)) {
-      batch.push(row);
-
-      if (batch.length >= batchSize) {
-        const current = batch.splice(0, batchSize);
-        const insertTask: Task<{ datasetType: DatasetKey; data: DatasetType[] }> = {
-          batchId: task.batchId,
-          taskId: crypto.randomUUID(),
-          name: TaskName.INSERT_DATA,
-          payload: { datasetType, data: current },
-          retryCount: 0,
-          createdAt: Date.now(),
-        };
-        await redisClient.rPush(mainQueue, JSON.stringify(insertTask));
-        totalQueued += current.length;
-      }
-    }
-
-    if (batch.length > 0) {
-      const insertTask: Task<{ datasetType: DatasetKey; data: DatasetType[] }> = {
-        batchId: task.batchId,
-        taskId: crypto.randomUUID(),
-        name: TaskName.INSERT_DATA,
-        payload: { datasetType, data: batch },
-        retryCount: 0,
-        createdAt: Date.now(),
-      };
-      await redisClient.rPush(mainQueue, JSON.stringify(insertTask));
-      totalQueued += batch.length;
-    }
-  } catch (err) {
-    console.error(`[Parse Error] ${datasetType}: ${(err as Error).message}`);
-    throw err;
-  }
-
-  return { success: true, count: totalQueued, datasetType };
-};
-
-export const handleParseTask = async (
-  batchId: string,
-  task: Task<any>,
-  mysqlCmd: MysqlCommand,
-) => {
-  const { datasetType, data, skip } = task.payload;
-
-  if (skip) {
-    return { success: true, count: 0, skipped: true };
-  }
-
-  if (!data || !Array.isArray(data) || data.length === 0) {
-    return { success: true, count: 0 };
-  }
-
-  try {
-    await insertByDatasetType(mysqlCmd, datasetType, data);
-
-    return {
-      success: true,
-      count: data.length,
-      datasetType,
-    };
-  } catch (err) {
-    console.error(`[Insert Error] ${datasetType}: ${(err as Error).message}`);
-    throw err;
+      throw new Error(`unknown datasetType: ${datasetType}`);
   }
 };

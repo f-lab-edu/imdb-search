@@ -9,9 +9,11 @@ describe("db connection test", () => {
 
   beforeAll(async () => {
     const db = await import("../../db/index.js");
-    MysqlDB = db.MysqlDB;
-    OpenSearchDB = db.OpenSearchDB;
-    RedisDB = db.RedisDB;
+    const { config } = await import("../../config/index.js");
+
+    MysqlDB = new db.MysqlDatabase(config.db.mysql);
+    OpenSearchDB = new db.OpenSearchDatabase(config.db.opensearch);
+    RedisDB = new db.RedisDatabase(config.db.redis);
   });
 
   afterAll(async () => {
@@ -23,11 +25,7 @@ describe("db connection test", () => {
   });
 
   it("pings all database - mysql,redis,opensearch", async () => {
-    const results = await Promise.allSettled([
-      MysqlDB.ping(),
-      RedisDB.ping(),
-      OpenSearchDB.ping(),
-    ]);
+    const results = await Promise.allSettled([MysqlDB.ping(), RedisDB.ping(), OpenSearchDB.ping()]);
 
     results.forEach((res, idx) => {
       if (res.status == "rejected") {

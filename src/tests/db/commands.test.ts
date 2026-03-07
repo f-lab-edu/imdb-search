@@ -27,16 +27,12 @@ describe("MysqlCommand test", () => {
   });
 
   it("bulkInsert: insert genres", async () => {
-    const mockGenres = [
-      { name: "Action" },
-      { name: "Comedy" },
-      { name: "Drama" },
-    ];
+    const mockGenres = [{ name: "Action" }, { name: "Comedy" }, { name: "Drama" }];
 
     await cmd.bulkInsert("GENRES", mockGenres as any);
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT name FROM GENRES ORDER BY name ASC",
+      "SELECT name FROM GENRES ORDER BY name ASC"
     );
 
     expect(rows.length).toBe(3);
@@ -72,7 +68,7 @@ describe("MysqlCommand test", () => {
     await cmd.bulkInsert("TITLES", mockTitles);
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT tconst, primary_title FROM TITLES ORDER BY tconst ASC",
+      "SELECT tconst, primary_title FROM TITLES ORDER BY tconst ASC"
     );
 
     expect(rows.length).toBe(2);
@@ -89,7 +85,7 @@ describe("MysqlCommand test", () => {
     await cmd.bulkInsert("RATINGS", mockRatings);
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT tconst, average_rating, num_votes FROM RATINGS ORDER BY tconst ASC",
+      "SELECT tconst, average_rating, num_votes FROM RATINGS ORDER BY tconst ASC"
     );
 
     expect(rows.length).toBe(2);
@@ -137,12 +133,12 @@ describe("MysqlCommand test", () => {
     await cmd.insertTitleBasics(mockData);
 
     const [titles] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT tconst FROM TITLES ORDER BY tconst ASC",
+      "SELECT tconst FROM TITLES ORDER BY tconst ASC"
     );
     expect(titles.length).toBe(2);
 
     const [titleGenres] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT tconst, genre_id FROM TITLE_GENRES ORDER BY tconst ASC",
+      "SELECT tconst, genre_id FROM TITLE_GENRES ORDER BY tconst ASC"
     );
     // tt0000010 -> Action, Comedy / tt0000011 -> Drama, Comedy = 4건
     expect(titleGenres.length).toBe(4);
@@ -151,9 +147,7 @@ describe("MysqlCommand test", () => {
   it("bulkInsert: empty array does nothing", async () => {
     await cmd.bulkInsert("GENRES", [] as any);
 
-    const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT COUNT(*) as cnt FROM GENRES",
-    );
+    const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) as cnt FROM GENRES");
     expect((rows as any)[0].cnt).toBeGreaterThan(0);
   });
 });

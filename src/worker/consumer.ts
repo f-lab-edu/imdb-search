@@ -1,67 +1,53 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import type { MysqlCommand } from "../db/mysql/commands.js";
-import type { RedisDatabase } from "../db/redis.js";
-import {
-  isValidTask,
-  type Task,
-  TaskName,
-  type DownloadPayload,
-} from "./types.js";
-import {
-  handleDownloadTask,
-  handleParseTask,
-  handleSecondaryParseTask,
-} from "./handlers.js";
-import type { ParsePayload } from "./types.js";
+import { MysqlCommand } from "../db/index.js";
+import { RedisDatabase } from "../db/redis.js";
+import type { TaskHandlerMap } from "./handlers.js";
+import type { Producer } from "./producer.js";
+import { isValidTask, TaskPhase, type TaskConfig } from "./types.js";
 
-export interface TaskConfig {
-  mainQueue: string;
-  holdQueue: string;
-  primaryDoneKey: string;
-  maxWorkers: number;
-  maxRetry: number;
-}
-
-export interface TaskResult {
-  taskName: TaskName;
-  payload: unknown;
-}
-
-export class TaskConsumer {
-  private readonly redis;
-  private readonly mysqlCommand;
-
+export class Consumer {
+  // cfg
   private readonly maxWorkers: number;
-  private readonly mainQueue: string;
   private readonly maxRetry: number;
-  private isRunning = false;
+  private readonly mainQueue: string;
 
-  private readonly batchId;
-  private workers: Promise<unknown>[] = [];
+  // state
+  private isRunning = false;
+  private workers: Set<Promise<void>> = new Set();
+  private currentPhase: TaskPhase;
+
+  // dependencies
+  private readonly redis: ReturnType<RedisDatabase["getClient"]>;
+  private readonly mysqlCmd: MysqlCommand;
+  private readonly producer: Producer;
+  private readonly handlers: TaskHandlerMap;
 
   constructor(
-    redis: RedisDatabase,
     batchId: string,
-    mysqlCommand: MysqlCommand,
-    config: TaskConfig,
+    cfg: TaskConfig,
+    redis: RedisDatabase,
+    mysqlCmd: MysqlCommand,
+    producer: Producer,
+    handlers: TaskHandlerMap,
+    currPhase?: TaskPhase
   ) {
+    this.maxWorkers = cfg.maxWorkers;
+    this.maxRetry = cfg.maxRetry;
+    this.mainQueue = `${batchId}:${cfg.mainQueue}`;
+
+    this.currentPhase = currPhase ?? TaskPhase.DOWNLOAD;
+
     this.redis = redis.getClient();
-    this.mysqlCommand = mysqlCommand;
-
-    this.batchId = batchId;
-
-    this.maxWorkers = config.maxWorkers;
-    this.maxRetry = config.maxRetry;
-    this.mainQueue = `${config.mainQueue}:${this.batchId}`;
+    this.mysqlCmd = mysqlCmd;
+    this.producer = producer;
+    this.handlers = handlers;
   }
 
-  async start(onTaskDone?: (result: TaskResult) => void) {
+  async start() {
     this.isRunning = true;
-    console.log(`[Consumer] started with maxWorkers: ${this.maxWorkers}`);
+    console.log(`[consumer] started with max workers: ${this.maxWorkers}`);
 
     while (this.isRunning) {
-      const availableSlots = this.maxWorkers - this.workers.length;
+      const availableSlots = this.maxWorkers - this.workers.size;
 
       if (availableSlots <= 0) {
         await Promise.race(this.workers);
@@ -71,121 +57,84 @@ export class TaskConsumer {
       try {
         if (!this.isRunning) break;
 
-        const taskElements = await this.redis.lPopCount(
-          this.mainQueue,
-          availableSlots,
-        );
+        const taskElements = await this.redis.lPopCount(this.mainQueue, availableSlots);
 
         if (!taskElements || taskElements.length === 0) {
-          const idleData = await this.redis.blPop(this.mainQueue, 1);
-          if (!idleData) continue;
-          taskElements?.push(idleData.element);
+          const refilled = await this.producer.refill(this.currentPhase, availableSlots);
+
+          if (refilled === 0) {
+            if (this.workers.size === 0) {
+              if (this.currentPhase === TaskPhase.DOWNLOAD) {
+                this.currentPhase = TaskPhase.PRIMARY;
+              } else if (this.currentPhase === TaskPhase.PRIMARY) {
+                this.currentPhase = TaskPhase.SECONDARY;
+              } else {
+                break;
+              }
+            }
+
+            await new Promise((res) => setTimeout(res, 500));
+          }
+
+          continue;
         }
 
-        for (const element of taskElements || []) {
-          const taskPromise = this.executeTask(element, onTaskDone).finally(
-            () => {
-              this.workers = this.workers.filter((p) => p !== taskPromise);
-            },
-          );
-          this.workers.push(taskPromise);
+        for (const element of taskElements) {
+          const taskPromise: Promise<void> = this.executeTask(element).finally(() => {
+            this.workers.delete(taskPromise);
+          });
+
+          this.workers.add(taskPromise);
         }
       } catch (err) {
         if (!this.isRunning) break;
-        console.error(`Queue Error: ${(err as Error).message}`);
+        console.error(`[consumer] queue error: ${(err as Error).message}`);
         await new Promise((res) => setTimeout(res, 1000));
       }
     }
 
-    if (this.workers.length > 0) {
-      console.log(`[consumer] Finalizing ${this.workers.length} tasks...`);
+    if (this.workers.size > 0) {
+      console.log(`[consumer] finalizing ${this.workers.size} tasks...`);
       await Promise.allSettled(this.workers);
     }
 
-    console.log("[consumer] Task consumer stopped safely.");
+    console.log("[consumer] stopped safely.");
   }
 
   stop() {
     this.isRunning = false;
   }
 
-  get activeCount() {
-    return this.workers.length;
-  }
-
-  async executeTask(
-    taskElement: string,
-    onTaskDone?: (result: TaskResult) => void,
-  ) {
-    let task: Task | null = null;
+  async executeTask(element: string) {
+    let task: ReturnType<typeof JSON.parse>;
 
     try {
-      task = JSON.parse(taskElement);
+      task = JSON.parse(element);
+    } catch {
+      console.error(`[consumer] invalid task JSON: ${element}`);
+      return;
+    }
 
-      if (!isValidTask(task)) {
-        console.error(`invalid task data: ${taskElement}`);
-        return;
-      }
+    if (!isValidTask(task)) {
+      console.error(`[consumer] invalid task shape: ${element}`);
+      return;
+    }
 
-      switch (task.name) {
-        case TaskName.DOWNLOAD:
-          console.log(`[consumer] received download task: ${task.taskId}`);
+    const handler = this.handlers[task.name];
+    if (!handler) {
+      console.error(`[consumer] no handler registered for: ${task.name}`);
+      return;
+    }
 
-          const result = await handleDownloadTask(
-            this.batchId,
-            task.taskId,
-            task.payload as DownloadPayload,
-            this.redis,
-          );
-
-          onTaskDone?.({ taskName: TaskName.DOWNLOAD, payload: result });
-          break;
-
-        case TaskName.INSERT_DATA:
-        case TaskName.PARSE_PRIMARY:
-          console.log(`[consumer] processing ${task.name}: ${task.taskId}`);
-
-          const parseResult = await handleParseTask(
-            this.batchId,
-            task,
-            this.mysqlCommand,
-          );
-
-          onTaskDone?.({ taskName: task.name, payload: parseResult });
-          break;
-
-        case TaskName.PARSE_SECONDARY:
-          console.log(`[consumer] processing ${task.name}: ${task.taskId}`);
-
-          const secondaryResult = await handleSecondaryParseTask(
-            task as Task<ParsePayload>,
-            this.mainQueue,
-            this.redis,
-          );
-
-          onTaskDone?.({ taskName: task.name, payload: secondaryResult });
-          break;
-
-        default:
-          console.warn(`unknown task name: ${task.name}`);
-      }
+    try {
+      await handler(task);
     } catch (err) {
-      console.error(`Task Error: ${(err as Error).message}`);
-
-      if (task && task.retryCount <= this.maxRetry) {
+      console.error(`[consumer] task ${task.taskId} failed: ${(err as Error).message}`);
+      if (task.retryCount < this.maxRetry) {
         task.retryCount++;
         await this.redis.rPush(this.mainQueue, JSON.stringify(task));
       } else {
-        console.error(`task failed with max retry: ${task?.taskId}`);
-        const logPath = path.join(process.cwd(), "failed-tasks.jsonl");
-        await fs.appendFile(
-          logPath,
-          JSON.stringify({
-            task,
-            error: (err as Error).message,
-            failedAt: new Date().toISOString(),
-          }) + "\n",
-        );
+        await this.mysqlCmd.markTaskFailed(task.taskId);
       }
     }
   }

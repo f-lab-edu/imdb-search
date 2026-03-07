@@ -10,6 +10,7 @@ const DB_CONFIG = {
   redis: {
     socket: {
       host: process.env.REDIS_HOST || "localhost",
+      port: Number(process.env.REDIS_PORT) || 6379,
     },
     password: process.env.REDIS_PASSWORD || "",
   },
@@ -74,11 +75,9 @@ const DATASET_CONFIG = {
 
 const TASK_CONFIG = {
   mainQueue: process.env.TASK_MAIN_QUEUE_NAME || "task_main_queue",
-  holdQueue: process.env.TASK_HOLD_QUEUE_NAME || "task_hold_queue",
-  primaryDoneKey: process.env.TASK_PRIMARY_DONE_KEY || "task_primary_done",
+  maxQueueLength: Number(process.env.TASK_MAX_QUEUE_LEN) || 5000,
   maxWorkers: Number(process.env.TASK_MAX_WORKERS) || 10,
   maxRetry: Number(process.env.TASK_MAX_RETRY) || 3,
-  primaryConfig: Number(process.env.TASK_PRIMARY_COUNT) || 2,
   batchSize: Number(process.env.TASK_BATCH_SIZE) || 1000,
 };
 
