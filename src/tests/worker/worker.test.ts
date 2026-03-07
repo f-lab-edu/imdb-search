@@ -120,7 +120,7 @@ describe("Producer", () => {
   afterEach(() => cleanupBatch(batchId));
 
   it("produceDownloadTask: writes DOWNLOAD task to MySQL with phase=DOWNLOAD", async () => {
-    await producer.produceDownloadTask("https://example.com/file.tsv.gz", "/tmp/file.tsv");
+    await producer.produceDownloadTask("https://example.com/file.tsv.gz", `.randomUUID()}.tsv`);
 
     const tasks = await mysqlCmd.fetchPendingTasks(TaskPhase.DOWNLOAD, 10);
     const task = tasks.find((t) => t.batchId === batchId);
@@ -133,7 +133,7 @@ describe("Producer", () => {
       batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.PARSE_PRIMARY,
-      payload: { filePath: "/tmp/test.tsv", datasetType: "TITLE_BASICS" },
+      payload: { filePath: `.randomUUID()}.tsv`, datasetType: "TITLE_BASICS" },
       retryCount: 0,
       createdAt: Date.now(),
     };
@@ -151,7 +151,7 @@ describe("Producer", () => {
       batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.PARSE_PRIMARY,
-      payload: { filePath: "/tmp/test.tsv", datasetType: "TITLE_BASICS" },
+      payload: { filePath: `.randomUUID()}.tsv`, datasetType: "TITLE_BASICS" },
       retryCount: 0,
       createdAt: Date.now(),
     };
@@ -171,7 +171,7 @@ describe("Producer", () => {
       batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.PARSE_PRIMARY,
-      payload: { filePath: "/tmp/test.tsv", datasetType: "TITLE_BASICS" },
+      payload: { filePath: `.randomUUID()}.tsv`, datasetType: "TITLE_BASICS" },
       retryCount: 0,
       createdAt: Date.now(),
     };
