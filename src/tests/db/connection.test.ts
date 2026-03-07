@@ -1,6 +1,5 @@
 import dotenv from "dotenv";
 import { describe, beforeAll, afterAll, it, expect } from "@jest/globals";
-import { resetMysql } from "./helpers.js";
 
 dotenv.config({ path: ".env.test" });
 
@@ -17,8 +16,6 @@ describe("db connection test", () => {
   });
 
   afterAll(async () => {
-    await resetMysql(MysqlDB.getPool());
-
     await MysqlDB.close();
     await RedisDB.close();
     await OpenSearchDB.close();

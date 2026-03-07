@@ -4,7 +4,6 @@ import mysql from "mysql2/promise";
 import { MysqlDatabase } from "../../db/mysql/connection.js";
 import { MysqlCommand } from "../../db/mysql/commands.js";
 import type { TitleBasics, TitleRatings } from "../../utils/types.js";
-import { resetMysql } from "./helpers.js";
 
 describe("MysqlCommand test", () => {
   let db: MysqlDatabase;
@@ -22,7 +21,6 @@ describe("MysqlCommand test", () => {
   });
 
   afterAll(async () => {
-    await resetMysql(pool);
     await db.close();
   });
 
@@ -68,7 +66,7 @@ describe("MysqlCommand test", () => {
     await cmd.bulkInsert("TITLES", mockTitles);
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT tconst, primary_title FROM TITLES ORDER BY tconst ASC"
+      "SELECT tconst, primary_title FROM TITLES WHERE tconst IN ('tt0000001','tt0000002') ORDER BY tconst ASC"
     );
 
     expect(rows.length).toBe(2);
@@ -85,7 +83,7 @@ describe("MysqlCommand test", () => {
     await cmd.bulkInsert("RATINGS", mockRatings);
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT tconst, average_rating, num_votes FROM RATINGS ORDER BY tconst ASC"
+      "SELECT tconst, average_rating, num_votes FROM RATINGS WHERE tconst IN ('tt0000001','tt0000002') ORDER BY tconst ASC"
     );
 
     expect(rows.length).toBe(2);
@@ -97,9 +95,9 @@ describe("MysqlCommand test", () => {
     const conn = await pool.getConnection();
     try {
       await conn.query("SET FOREIGN_KEY_CHECKS = 0");
-      await conn.query("TRUNCATE TABLE TITLE_GENRES");
-      await conn.query("TRUNCATE TABLE RATINGS");
-      await conn.query("TRUNCATE TABLE TITLES");
+      await conn.query("DELETE FROM TITLE_GENRES WHERE tconst IN ('tt0000010','tt0000011')");
+      await conn.query("DELETE FROM RATINGS WHERE tconst IN ('tt0000010','tt0000011')");
+      await conn.query("DELETE FROM TITLES WHERE tconst IN ('tt0000010','tt0000011')");
       await conn.query("SET FOREIGN_KEY_CHECKS = 1");
     } finally {
       conn.release();
@@ -133,7 +131,7 @@ describe("MysqlCommand test", () => {
     await cmd.insertTitleBasics(mockData);
 
     const [titles] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT tconst FROM TITLES ORDER BY tconst ASC"
+      "SELECT tconst FROM TITLES WHERE tconst IN ('tt0000010','tt0000011') ORDER BY tconst ASC"
     );
     expect(titles.length).toBe(2);
 

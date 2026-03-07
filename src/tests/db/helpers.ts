@@ -1,6 +1,10 @@
 import mysql from "mysql2/promise";
 
 export const resetMysql = async (pool: mysql.Pool) => {
+  if (!process.env.DB_NAME?.includes("test")) {
+    throw new Error("resetMysql: refusing to run against non-test DB");
+  }
+
   let conn = null;
 
   try {
