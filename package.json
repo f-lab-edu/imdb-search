@@ -7,12 +7,15 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx src/index.ts",
-    "test-download": "tsx src/utils/download.test.ts",
-    "test-db": "tsx src/db/db.test.ts",
-    "test-parse": "tsx src/utils/parse.test.ts",
-    "test-task": "tsx src/worker/task.test.ts"
+    "dev:api": "tsx src/api.ts",
+    "clean": "rm -rf dist",
+    "build": "tsc && cp src/db/mysql/schema.sql dist/db/mysql/schema.sql",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --detectOpenHandles",
+    "test:db": "npm test -- tests/db/",
+    "test:utils": "npm test -- tests/utils/",
+    "test:task": "npm test -- tests/worker/",
+    "test:worker": "npm run build && NODE_OPTIONS='--experimental-vm-modules' jest --detectOpenHandles dist/tests/worker/"
   },
   "repository": {
     "type": "git",
@@ -28,14 +31,19 @@
   "homepage": "https://github.com/f-lab-edu/imdb-search#readme",
   "devDependencies": {
     "@types/axios": "^0.9.36",
+    "@types/jest": "^30.0.0",
     "@types/node": "^25.0.10",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@opensearch-project/opensearch": "^3.5.1",
+    "@types/express": "^5.0.6",
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
+    "express": "^5.2.1",
     "mysql2": "^3.16.2",
     "redis": "^5.10.0"
   }

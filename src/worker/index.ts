@@ -1,186 +1,37 @@
-import {
-  type Task,
-  isValidTask,
-  TaskName,
-  type DownloadPayload,
-  type ParsePayload,
-} from "./types.js";
-import { RedisDB } from "../db/index.js";
-import { handleParseAndInsert, hanldeDownloadTask } from "./handlers.js";
-import type { MysqlCommand } from "../db/mysql/commands.js";
-import { isPrimary } from "../utils/helpers.js";
+import path from "node:path";
+import type { Tconfig } from "../config/index.js";
+import type { MysqlCommand, RedisDatabase } from "../db/index.js";
+import { Consumer } from "./consumer.js";
+import { createHandlers } from "./handlers.js";
+import { Producer } from "./producer.js";
 
-export interface TaskConfig {
-  mainQueue: string;
-  holdQueue: string;
-  primaryDoneKey: string;
-  maxWorkers: number;
-  maxRetry: number;
-  primaryCount: number;
-  batchSize: number;
-}
+export const runPipeline = async (cfg: Tconfig, mysqlCmd: MysqlCommand, redis: RedisDatabase) => {
+  const batchId = crypto.randomUUID();
+  const producer = new Producer(batchId, cfg.task, redis, mysqlCmd);
+  const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
+  const consumer = new Consumer(batchId, cfg.task, redis, mysqlCmd, producer, handlers);
 
-export class TaskRunner {
-  private readonly maxWorkers: number;
-  private readonly maxRetry: number;
-  private readonly mainQueue: string;
-  private readonly holdQueue: string;
-  private readonly primaryDoneKey: string;
-  private readonly primaryCount: number;
-  private readonly batchSize: number;
-  private isRunning = false;
+  await triggerDownload(cfg, producer);
 
-  private readonly batchId;
-  private readonly redis;
-  private readonly mysql;
-  private workers: Promise<unknown>[] = [];
+  await consumer.start();
+};
 
-  constructor(redis: typeof RedisDB, mysql: MysqlCommand, config: TaskConfig) {
-    this.redis = redis.getClient();
-    this.mysql = mysql;
-    this.batchId = crypto.randomUUID();
+const triggerDownload = async (cfg: Tconfig, producer: Producer) => {
+  // trigger download job
+  const downloadTaskPromises = [];
+  for (const file of cfg.datasets.files) {
+    const url = `${cfg.datasets.baseUrl}${file.name}`;
+    const targetPath = path.join(cfg.datasets.downloadDir, file.name.replaceAll(".gz", ""));
 
-    this.maxWorkers = config.maxWorkers;
-    this.maxRetry = config.maxRetry;
-    this.mainQueue = `${config.mainQueue}:${this.batchId}`;
-    this.holdQueue = `${config.holdQueue}:${this.batchId}`;
-    this.primaryDoneKey = `${config.primaryDoneKey}:${this.batchId}`;
-    this.primaryCount = config.primaryCount;
-    this.batchSize = config.batchSize;
+    downloadTaskPromises.push(producer.produceDownloadTask(url, targetPath));
   }
 
-  getBatchId() {
-    return this.batchId;
+  const results = await Promise.allSettled(downloadTaskPromises);
+
+  const failed = results.filter((r) => r.status === "rejected");
+  if (failed.length > 0) {
+    failed.forEach((r) =>
+      console.error(`[producer] download task failed:`, (r as PromiseRejectedResult).reason)
+    );
   }
-
-  async pushTask(task: Task) {
-    await this.redis.lPush(this.mainQueue, JSON.stringify(task));
-  }
-
-  async start() {
-    this.isRunning = true;
-
-    while (this.isRunning) {
-      if (this.workers.length >= this.maxWorkers) {
-        await Promise.race(this.workers);
-        continue;
-      }
-
-      try {
-        if (!this.isRunning) break;
-
-        const taskData = await this.redis.blPop(this.mainQueue, 1);
-
-        if (!this.isRunning || !taskData) continue;
-
-        const taskPromise = this.executeTask(taskData.element).finally(() => {
-          this.workers = this.workers.filter((p) => p !== taskPromise);
-        });
-
-        this.workers.push(taskPromise);
-      } catch (err) {
-        if (!this.isRunning) break;
-        console.error(`Queue Error: ${(err as Error).message}`);
-      }
-    }
-
-    if (this.workers.length > 0) {
-      console.log(`waiting for ${this.workers.length} workers to finish...`);
-      await Promise.allSettled(this.workers);
-    }
-
-    console.log("task runner stopped safely");
-  }
-
-  stop() {
-    this.isRunning = false;
-  }
-
-  async executeTask(taskElement: string) {
-    let task: Task | null = null;
-
-    try {
-      task = JSON.parse(taskElement);
-
-      if (!isValidTask(task)) {
-        console.error(`invalid task data: ${taskElement}`);
-        return; // throw error?
-      }
-
-      switch (task.name) {
-        case TaskName.DOWNLOAD:
-          const nextTask = await hanldeDownloadTask(
-            this.batchId,
-            task.taskId,
-            task.payload as DownloadPayload,
-            this.redis,
-          ); // task 타입 가드에서 payload까지 체크해서 괜찮다
-
-          const datasetType = nextTask.payload.datasetType;
-          const primary = isPrimary(datasetType);
-
-          if (primary) {
-            await this.redis.rPush(this.mainQueue, JSON.stringify(nextTask));
-          } else {
-            await this.redis.rPush(this.holdQueue, JSON.stringify(nextTask));
-          }
-
-          break;
-
-        case TaskName.PARSE_PRIMARY:
-          await handleParseAndInsert(
-            this.batchId,
-            task.taskId,
-            task.payload as ParsePayload,
-            this.mysql,
-            this.batchSize,
-          );
-
-          const completedCount = await this.redis.hIncrBy(
-            `batch:${this.batchId}`,
-            this.primaryDoneKey,
-            1,
-          );
-
-          if (completedCount === this.primaryCount) {
-            console.log("parse primary phase done, moving on to second phase");
-
-            while (true) {
-              const task = await this.redis.rPopLPush(
-                this.holdQueue,
-                this.mainQueue,
-              );
-              if (!task) break;
-            }
-
-            await this.redis.del(this.holdQueue);
-          }
-
-          break;
-
-        case TaskName.PARSE_SECONDARY:
-          await handleParseAndInsert(
-            this.batchId,
-            task.taskId,
-            task.payload as ParsePayload,
-            this.mysql,
-            this.batchSize,
-          );
-
-          break;
-        default:
-          console.warn(`unknown task name: ${task.name}`);
-      }
-    } catch (err) {
-      console.error(`Task Error: ${(err as Error).message}`);
-
-      if (task && task.retryCount <= this.maxRetry) {
-        task.retryCount++;
-        await this.redis.rPush(this.mainQueue, JSON.stringify(task));
-      } else {
-        console.error(`task failed with max retry`);
-        // TODO: 따로 실패 기록 저장해두고 나중에 다시 하던지 하기
-      }
-    }
-  }
-}
+};
