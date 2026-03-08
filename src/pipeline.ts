@@ -4,14 +4,18 @@ import { MysqlDatabase } from "./db/mysql/connection.js";
 import { RedisDatabase } from "./db/redis.js";
 import { runPipeline } from "./worker/index.js";
 
+export interface PipelineOptions {
+  skipDownload?: boolean;
+}
+
 // download source file -> read it and writes to mysql
-export async function startPipeline(config: Tconfig) {
+export async function startPipeline(config: Tconfig, options?: PipelineOptions) {
   const mysqlDb = new MysqlDatabase(config.db.mysql);
   const mysqlCmd = await MysqlCommand.create(mysqlDb.getPool());
   const redis = await RedisDatabase.create(config.db.redis);
 
   try {
-    await runPipeline(config, mysqlCmd, redis);
+    await runPipeline(config, mysqlCmd, redis, options);
   } finally {
     await redis.close();
     await mysqlDb.close();

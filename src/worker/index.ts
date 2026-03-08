@@ -5,13 +5,20 @@ import { Consumer } from "./consumer.js";
 import { createHandlers } from "./handlers.js";
 import { Producer } from "./producer.js";
 
-export const runPipeline = async (cfg: Tconfig, mysqlCmd: MysqlCommand, redis: RedisDatabase) => {
+export const runPipeline = async (
+  cfg: Tconfig,
+  mysqlCmd: MysqlCommand,
+  redis: RedisDatabase,
+  options?: { skipDownload?: boolean }
+) => {
   const batchId = crypto.randomUUID();
   const producer = new Producer(batchId, cfg.task, redis, mysqlCmd);
   const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
   const consumer = new Consumer(batchId, cfg.task, redis, mysqlCmd, producer, handlers);
 
-  await triggerDownload(cfg, producer);
+  if (!options?.skipDownload) {
+    await triggerDownload(cfg, producer);
+  }
 
   await consumer.start();
 };
