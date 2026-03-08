@@ -6,6 +6,10 @@
 
 ![architecture](docs/architecture.png)
 
+## ERD
+
+![erd](docs/imdb-erd.png)
+
 ## 프로젝트 목표
 
 - IMDb 공개 데이터셋을 기반으로 영화/TV 콘텐츠를 검색 및 조회할 수 있는 시스템을 구축하는 것이 목표입니다.
