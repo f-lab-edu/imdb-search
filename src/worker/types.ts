@@ -55,3 +55,7 @@ export const isValidTask = (task: any): task is Task => {
     typeof task.createdAt === "number"
   );
 };
+
+export interface PipelineOptions {
+  skipDownload?: boolean;
+}

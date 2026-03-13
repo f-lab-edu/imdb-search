@@ -4,14 +4,34 @@ import type { MysqlCommand, RedisDatabase } from "../db/index.js";
 import { Consumer } from "./consumer.js";
 import { createHandlers } from "./handlers.js";
 import { Producer } from "./producer.js";
+import type { PipelineOptions } from "./types.js";
 
-export const runPipeline = async (cfg: Tconfig, mysqlCmd: MysqlCommand, redis: RedisDatabase) => {
+export const runPipeline = async (
+  cfg: Tconfig,
+  mysqlCmd: MysqlCommand,
+  redis: RedisDatabase,
+  options?: PipelineOptions,
+) => {
   const batchId = crypto.randomUUID();
   const producer = new Producer(batchId, cfg.task, redis, mysqlCmd);
-  const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
-  const consumer = new Consumer(batchId, cfg.task, redis, mysqlCmd, producer, handlers);
+  const handlers = createHandlers(
+    redis,
+    mysqlCmd,
+    producer,
+    cfg.task.batchSize,
+  );
+  const consumer = new Consumer(
+    batchId,
+    cfg.task,
+    redis,
+    mysqlCmd,
+    producer,
+    handlers,
+  );
 
-  await triggerDownload(cfg, producer);
+  if (!options?.skipDownload) {
+    await triggerDownload(cfg, producer);
+  }
 
   await consumer.start();
 };
@@ -21,7 +41,10 @@ const triggerDownload = async (cfg: Tconfig, producer: Producer) => {
   const downloadTaskPromises = [];
   for (const file of cfg.datasets.files) {
     const url = `${cfg.datasets.baseUrl}${file.name}`;
-    const targetPath = path.join(cfg.datasets.downloadDir, file.name.replaceAll(".gz", ""));
+    const targetPath = path.join(
+      cfg.datasets.downloadDir,
+      file.name.replaceAll(".gz", ""),
+    );
 
     downloadTaskPromises.push(producer.produceDownloadTask(url, targetPath));
   }
@@ -31,7 +54,10 @@ const triggerDownload = async (cfg: Tconfig, producer: Producer) => {
   const failed = results.filter((r) => r.status === "rejected");
   if (failed.length > 0) {
     failed.forEach((r) =>
-      console.error(`[producer] download task failed:`, (r as PromiseRejectedResult).reason)
+      console.error(
+        `[producer] download task failed:`,
+        (r as PromiseRejectedResult).reason,
+      ),
     );
   }
 };
