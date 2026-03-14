@@ -32,15 +32,16 @@ export interface Task<T = unknown> {
   createdAt: number;
 }
 
-export interface LoadTSVPayload {
-  filePath: string;
-  skip?: boolean;
-}
-
 export interface DownloadPayload {
   url: string;
   targetPath: string;
   skipDownload: boolean;
+  skipLoad?: boolean;
+}
+
+export interface LoadTSVPayload {
+  filePath: string;
+  skip?: boolean;
 }
 
 export interface ParsePayload {
@@ -65,5 +66,6 @@ export const isValidTask = (task: any): task is Task => {
 };
 
 export interface PipelineOptions {
-  skipDownload?: boolean;
+  skipDownload: boolean;
+  skipLoadTSV: boolean;
 }

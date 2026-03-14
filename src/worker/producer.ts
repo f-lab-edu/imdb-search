@@ -1,3 +1,4 @@
+import type { PipelineOptions } from "./types.js";
 import type { RedisDatabase, MysqlCommand } from "../db/index.js";
 import {
   type TaskConfig,
@@ -32,13 +33,15 @@ export class Producer {
   async produceDownloadTask(
     url: string,
     targetPath: string,
-    skipDownload: boolean,
+    pipeOpts: PipelineOptions,
   ) {
+    const { skipDownload, skipLoadTSV } = pipeOpts;
+
     const downloadTask: Task<DownloadPayload> = {
       batchId: this.batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.DOWNLOAD,
-      payload: { url, targetPath, skipDownload },
+      payload: { url, targetPath, skipDownload, skipLoad: skipLoadTSV },
       retryCount: 0,
       createdAt: Date.now(),
     };

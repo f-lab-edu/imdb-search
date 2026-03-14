@@ -30,7 +30,8 @@ export const createHandlers = (
 
   return {
     [TaskName.DOWNLOAD]: async (task: Task) => {
-      const { url, targetPath, skipDownload } = task.payload as DownloadPayload;
+      const { url, targetPath, skipDownload, skipLoad } =
+        task.payload as DownloadPayload;
 
       let outPath = targetPath;
       let hash = "";
@@ -66,7 +67,7 @@ export const createHandlers = (
         name: TaskName.LOAD_TSV,
         payload: {
           filePath: outPath,
-          skip,
+          skip: skip || skipLoad || false,
         } satisfies LoadTSVPayload,
         retryCount: 0,
         createdAt: Date.now(),

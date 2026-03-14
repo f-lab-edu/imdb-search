@@ -30,13 +30,18 @@ export const runPipeline = async (
     handlers,
   );
 
-  await triggerDownload(cfg, producer, options?.skipDownload || false);
+  if (!options?.skipLoadTSV) {
+    await triggerDownload(
+      cfg,
+      producer,
+      options ?? { skipDownload: false, skipLoadTSV: false },
+    );
+    await consumer.start();
+    console.log("load까지 끝");
+  }
 
-  await consumer.start();
-
-  console.log("load까지 끝");
-
-  consumer.stop();
+  await normalizePrimary(mysqlCmd);
+  await normalizeSecondary(mysqlCmd);
 };
 
 // export const runPipeline = async ( cfg: Tconfig, mysqlCmd: MysqlCommand,
@@ -70,7 +75,7 @@ export const runPipeline = async (
 const triggerDownload = async (
   cfg: Tconfig,
   producer: Producer,
-  skipDownload: boolean,
+  pipeOpts: PipelineOptions,
 ) => {
   // trigger download job
   const downloadTaskPromises = [];
@@ -83,7 +88,7 @@ const triggerDownload = async (
     );
 
     downloadTaskPromises.push(
-      producer.produceDownloadTask(url, targetPath, skipDownload),
+      producer.produceDownloadTask(url, targetPath, pipeOpts),
     );
   }
 
@@ -99,4 +104,36 @@ const triggerDownload = async (
       ),
     );
   }
+};
+
+const normalizePrimary = async (mysqlCmd: MysqlCommand) => {
+  console.log("[normalize] primary: start");
+  console.time("normalize:primary");
+
+  await Promise.all([
+    mysqlCmd.normalize.genres(),
+    mysqlCmd.normalize.titles(),
+    mysqlCmd.normalize.persons(),
+  ]);
+
+  await mysqlCmd.normalize.titleGenres();
+
+  console.timeEnd("normalize:primary");
+};
+
+const normalizeSecondary = async (mysqlCmd: MysqlCommand) => {
+  const normalize = mysqlCmd.normalize;
+
+  console.log("[normalize] secondary: start");
+  console.time("normalize:secondary");
+
+  await Promise.all([
+    normalize.ratings(),
+    normalize.episodes(),
+    normalize.titleAkas(),
+    normalize.titleCrew(),
+    normalize.titlePrincipals(),
+  ]);
+
+  console.timeEnd("normalize:secondary");
 };

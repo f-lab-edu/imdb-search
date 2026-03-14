@@ -15,6 +15,8 @@ import {
   type TitlePrincipals,
 } from "../../utils/index.js";
 import type { Task } from "../../worker/types.js";
+import { MysqlIntegrity } from "./integrity.js";
+import { MysqlNormalize } from "./normalize.js";
 
 const STAGING_MAP: Record<string, { table: string; columns: string }> = {
   "title.basics.tsv": {
@@ -54,10 +56,14 @@ export class MysqlCommand {
   private readonly pool: mysql.Pool;
   private genresMap: Map<string, number>;
   private genreLock: Promise<void> = Promise.resolve();
+  readonly normalize;
+  readonly integrity;
 
   constructor(pool: mysql.Pool, genresMap?: Map<string, number>) {
     this.genresMap = genresMap || new Map();
     this.pool = pool;
+    this.normalize = new MysqlNormalize(this.pool);
+    this.integrity = new MysqlIntegrity(this.pool);
   }
 
   static async create(pool: mysql.Pool) {
