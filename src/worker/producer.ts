@@ -1,5 +1,11 @@
 import type { RedisDatabase, MysqlCommand } from "../db/index.js";
-import { type TaskConfig, type Task, type DownloadPayload, TaskName, TaskPhase } from "./types.js";
+import {
+  type TaskConfig,
+  type Task,
+  type DownloadPayload,
+  TaskName,
+  TaskPhase,
+} from "./types.js";
 
 export class Producer {
   // cfg
@@ -14,7 +20,7 @@ export class Producer {
     batchId: string,
     taskConfig: TaskConfig,
     redis: RedisDatabase,
-    mysqlCmd: MysqlCommand
+    mysqlCmd: MysqlCommand,
   ) {
     this.batchId = batchId;
     this.mainQueue = `${batchId}:${taskConfig.mainQueue}`;
@@ -23,20 +29,31 @@ export class Producer {
     this.mysqlCmd = mysqlCmd;
   }
 
-  async produceDownloadTask(url: string, targetPath: string) {
+  async produceDownloadTask(
+    url: string,
+    targetPath: string,
+    skipDownload: boolean,
+  ) {
     const downloadTask: Task<DownloadPayload> = {
       batchId: this.batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.DOWNLOAD,
-      payload: { url, targetPath },
+      payload: { url, targetPath, skipDownload },
       retryCount: 0,
       createdAt: Date.now(),
     };
 
-    await this.mysqlCmd.insertTask(downloadTask, TaskPhase.DOWNLOAD);
+    await this.enqueue(downloadTask);
   }
 
-  async produce(task: Task, phase: TaskPhase) {
+  // add task to redis queue
+  async enqueue(task: Task) {
+    await this.redis.rPush(this.mainQueue, JSON.stringify(task));
+  }
+
+  // add task to db
+  // TODO: need phase?
+  async schedule(task: Task, phase: TaskPhase) {
     await this.mysqlCmd.insertTask(task, phase);
   }
 
@@ -45,8 +62,9 @@ export class Producer {
     if (pending.length === 0) return 0;
 
     await Promise.allSettled(
-      pending.map((t) => this.redis.rPush(this.mainQueue, JSON.stringify(t)))
+      pending.map((t) => this.redis.rPush(this.mainQueue, JSON.stringify(t))),
     );
+
     await this.mysqlCmd.markTasksQueued(pending.map((t) => t.taskId));
 
     return pending.length;

@@ -43,7 +43,8 @@ switch (command) {
         "  api                        Start API server",
         "  run                        Run pipeline + index",
         "  cron                       Start cron daemon (daily 2am)",
-      ].join("\n")
+      ].join("\n"),
     );
+
     process.exit(command ? 1 : 0);
 }

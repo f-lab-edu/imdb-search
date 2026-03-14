@@ -1,3 +1,64 @@
+-- staging 테이블 (LOAD DATA INFILE용, FK/인덱스 없음)
+CREATE TABLE IF NOT EXISTS staging_title_basics(
+    tconst VARCHAR(20),
+    title_type VARCHAR(50),
+    primary_title VARCHAR(500),
+    original_title VARCHAR(500),
+    is_adult TINYINT,
+    start_year VARCHAR(10),
+    end_year VARCHAR(10),
+    runtime_minutes VARCHAR(10),
+    genres VARCHAR(255)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staging_name_basics(
+    nconst VARCHAR(20),
+    primary_name VARCHAR(200),
+    birth_year VARCHAR(10),
+    death_year VARCHAR(10),
+    primary_profession VARCHAR(500),
+    known_for_titles VARCHAR(500)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staging_title_akas(
+    tconst VARCHAR(20),
+    ordering VARCHAR(10),
+    title VARCHAR(500),
+    region VARCHAR(10),
+    language VARCHAR(10),
+    types VARCHAR(200),
+    attributes TEXT,
+    is_original_title TINYINT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staging_title_ratings(
+    tconst VARCHAR(20),
+    average_rating VARCHAR(10),
+    num_votes VARCHAR(20)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staging_title_episode(
+    tconst VARCHAR(20),
+    parent_tconst VARCHAR(20),
+    season_number VARCHAR(10),
+    episode_number VARCHAR(10)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staging_title_crew(
+    tconst VARCHAR(20),
+    directors TEXT,
+    writers TEXT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staging_title_principals(
+    tconst VARCHAR(20),
+    ordering VARCHAR(10),
+    nconst VARCHAR(20),
+    category VARCHAR(100),
+    job VARCHAR(500),
+    characters TEXT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 0. 작업 큐 - Redis overflow 및 phase 관리용
 CREATE TABLE IF NOT EXISTS TASKS(
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,

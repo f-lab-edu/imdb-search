@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise";
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import fsPromise from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -14,6 +15,40 @@ import {
   type TitlePrincipals,
 } from "../../utils/index.js";
 import type { Task } from "../../worker/types.js";
+
+const STAGING_MAP: Record<string, { table: string; columns: string }> = {
+  "title.basics.tsv": {
+    table: "staging_title_basics",
+    columns:
+      "tconst, title_type, primary_title, original_title, is_adult, start_year, end_year, runtime_minutes, genres",
+  },
+  "name.basics.tsv": {
+    table: "staging_name_basics",
+    columns:
+      "nconst, primary_name, birth_year, death_year, primary_profession, known_for_titles",
+  },
+  "title.akas.tsv": {
+    table: "staging_title_akas",
+    columns:
+      "tconst, ordering, title, region, language, types, attributes, is_original_title",
+  },
+  "title.ratings.tsv": {
+    table: "staging_title_ratings",
+    columns: "tconst, average_rating, num_votes",
+  },
+  "title.episode.tsv": {
+    table: "staging_title_episode",
+    columns: "tconst, parent_tconst, season_number, episode_number",
+  },
+  "title.crew.tsv": {
+    table: "staging_title_crew",
+    columns: "tconst, directors, writers",
+  },
+  "title.principals.tsv": {
+    table: "staging_title_principals",
+    columns: "tconst, ordering, nconst, category, job, characters",
+  },
+};
 
 export class MysqlCommand {
   private readonly pool: mysql.Pool;
@@ -32,7 +67,9 @@ export class MysqlCommand {
       await MysqlCommand.migrateSchema(conn);
 
       let genresMap: Map<string, number> = new Map();
-      const [rows] = await conn.query<mysql.RowDataPacket[]>("SELECT id,name FROM GENRES");
+      const [rows] = await conn.query<mysql.RowDataPacket[]>(
+        "SELECT id,name FROM GENRES",
+      );
 
       rows.forEach((row: mysql.RowDataPacket) => {
         genresMap.set(row.name, row.id);
@@ -46,9 +83,9 @@ export class MysqlCommand {
 
   static async migrateSchema(conn: mysql.PoolConnection) {
     try {
-      const sql = await fs.readFile(
+      const sql = await fsPromise.readFile(
         path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.sql"),
-        "utf-8"
+        "utf-8",
       );
 
       const queries = sql
@@ -67,6 +104,39 @@ export class MysqlCommand {
     }
   }
 
+  async loadInfIle(filePath: string) {
+    const fileName = path.basename(filePath); // e.g. "title.basics.tsv"
+    const staging = STAGING_MAP[fileName];
+
+    if (!staging) {
+      throw new Error(`no staging table mapping for: ${fileName}`);
+    }
+
+    const conn = await this.pool.getConnection();
+
+    try {
+      await conn.query(`TRUNCATE TABLE ${staging.table}`);
+      await conn.query(
+        {
+          sql: `
+          LOAD DATA LOCAL INFILE ?
+          INTO TABLE ${staging.table}
+          FIELDS TERMINATED BY '\t'
+          LINES TERMINATED BY '\\n'
+          IGNORE 1 LINES
+          (${staging.columns})
+        `,
+          infileStreamFactory: () => fs.createReadStream(filePath),
+        },
+        [filePath],
+      );
+    } catch (err) {
+      throw err;
+    } finally {
+      conn.release();
+    }
+  }
+
   async truncateTable(tableName: TableName) {
     const conn = await this.pool.getConnection();
 
@@ -80,7 +150,10 @@ export class MysqlCommand {
     }
   }
 
-  async bulkInsert<T extends Partial<DatasetType>>(tableName: TableName, data: T[]) {
+  async bulkInsert<T extends Partial<DatasetType>>(
+    tableName: TableName,
+    data: T[],
+  ) {
     if (data.length == 0) return;
 
     let conn = null;
@@ -93,7 +166,10 @@ export class MysqlCommand {
       const keys = Object.keys(data[0]!) as Array<keyof T>; // 위에서 길이 체크 했음
       const values = data.map((row) => keys.map((k) => row[k]));
 
-      await conn.query(`INSERT IGNORE INTO ${tableName} (${keys.join(",")}) VALUES ?`, [values]);
+      await conn.query(
+        `INSERT IGNORE INTO ${tableName} (${keys.join(",")}) VALUES ?`,
+        [values],
+      );
 
       await conn.commit();
     } catch (err) {
@@ -126,7 +202,7 @@ export class MysqlCommand {
 
             const [rows] = await conn.query<mysql.RowDataPacket[]>(
               "SELECT id, name FROM GENRES WHERE name IN (?)",
-              [newGenres]
+              [newGenres],
             );
 
             rows.forEach((row: mysql.RowDataPacket) => {
@@ -153,18 +229,21 @@ export class MysqlCommand {
       await this.insertGenres(data);
 
       // insert titles
-      const titles: Omit<TitleBasics, "genres">[] = data.map(({ genres, ...rest }) => rest);
+      const titles: Omit<TitleBasics, "genres">[] = data.map(
+        ({ genres, ...rest }) => rest,
+      );
 
       await this.bulkInsert("TITLES", titles);
 
       // insert titles_genres
-      const titleGenres: { tconst: string; genre_id: number }[] = data.flatMap((row) =>
-        (row.genres?.split(",") ?? [])
-          .map((genreName) => ({
-            tconst: row.tconst,
-            genre_id: this.genresMap.get(genreName) ?? -1,
-          }))
-          .filter((v) => v.genre_id > -1)
+      const titleGenres: { tconst: string; genre_id: number }[] = data.flatMap(
+        (row) =>
+          (row.genres?.split(",") ?? [])
+            .map((genreName) => ({
+              tconst: row.tconst,
+              genre_id: this.genresMap.get(genreName) ?? -1,
+            }))
+            .filter((v) => v.genre_id > -1),
       );
 
       await this.bulkInsert("TITLE_GENRES", titleGenres);
@@ -261,7 +340,7 @@ export class MysqlCommand {
           JSON.stringify(task.payload),
           task.retryCount,
           task.createdAt,
-        ]
+        ],
       );
     } catch (err) {
       console.error(`insertTask error: ${(err as Error).message}`);
@@ -277,7 +356,10 @@ export class MysqlCommand {
     const conn = await this.pool.getConnection();
 
     try {
-      await conn.query(`UPDATE TASKS SET status = 'queued' WHERE task_id IN (?)`, [taskIds]);
+      await conn.query(
+        `UPDATE TASKS SET status = 'queued' WHERE task_id IN (?)`,
+        [taskIds],
+      );
     } finally {
       conn.release();
     }
@@ -287,7 +369,9 @@ export class MysqlCommand {
     const conn = await this.pool.getConnection();
 
     try {
-      await conn.query(`UPDATE TASKS SET status = 'failed' WHERE task_id = ?`, [taskId]);
+      await conn.query(`UPDATE TASKS SET status = 'failed' WHERE task_id = ?`, [
+        taskId,
+      ]);
     } finally {
       conn.release();
     }
@@ -300,7 +384,7 @@ export class MysqlCommand {
     try {
       const [rows] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT 1 FROM TASKS WHERE status = 'pending' AND phase = ? LIMIT 1`,
-        [phase]
+        [phase],
       );
       return rows.length > 0;
     } finally {
@@ -316,14 +400,15 @@ export class MysqlCommand {
         `SELECT task_id, batch_id, name, payload, retry_count, created_at
          FROM TASKS WHERE status = 'pending' AND phase = ?
          ORDER BY id ASC LIMIT ?`,
-        [phase, limit]
+        [phase, limit],
       );
 
       return rows.map((r) => ({
         taskId: r.task_id,
         batchId: r.batch_id,
         name: r.name,
-        payload: typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload,
+        payload:
+          typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload,
         retryCount: r.retry_count,
         createdAt: r.created_at,
       }));

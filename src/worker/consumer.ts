@@ -28,7 +28,7 @@ export class Consumer {
     mysqlCmd: MysqlCommand,
     producer: Producer,
     handlers: TaskHandlerMap,
-    currPhase?: TaskPhase
+    currPhase?: TaskPhase,
   ) {
     this.maxWorkers = cfg.maxWorkers;
     this.maxRetry = cfg.maxRetry;
@@ -57,10 +57,16 @@ export class Consumer {
       try {
         if (!this.isRunning) break;
 
-        const taskElements = await this.redis.lPopCount(this.mainQueue, availableSlots);
+        const taskElements = await this.redis.lPopCount(
+          this.mainQueue,
+          availableSlots,
+        );
 
         if (!taskElements || taskElements.length === 0) {
-          const refilled = await this.producer.refill(this.currentPhase, availableSlots);
+          const refilled = await this.producer.refill(
+            this.currentPhase,
+            availableSlots,
+          );
 
           if (refilled === 0) {
             if (this.workers.size === 0) {
@@ -69,6 +75,7 @@ export class Consumer {
               } else if (this.currentPhase === TaskPhase.PRIMARY) {
                 this.currentPhase = TaskPhase.SECONDARY;
               } else {
+                console.log("[consumer] no more tasks, stopping...");
                 break;
               }
             }
@@ -80,9 +87,11 @@ export class Consumer {
         }
 
         for (const element of taskElements) {
-          const taskPromise: Promise<void> = this.executeTask(element).finally(() => {
-            this.workers.delete(taskPromise);
-          });
+          const taskPromise: Promise<void> = this.executeTask(element).finally(
+            () => {
+              this.workers.delete(taskPromise);
+            },
+          );
 
           this.workers.add(taskPromise);
         }
@@ -129,7 +138,9 @@ export class Consumer {
     try {
       await handler(task);
     } catch (err) {
-      console.error(`[consumer] task ${task.taskId} failed: ${(err as Error).message}`);
+      console.error(
+        `[consumer] task ${task.taskId} failed: ${(err as Error).message}`,
+      );
       if (task.retryCount < this.maxRetry) {
         task.retryCount++;
         await this.redis.rPush(this.mainQueue, JSON.stringify(task));

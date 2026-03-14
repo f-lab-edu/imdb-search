@@ -2,8 +2,9 @@ import type { DatasetKey } from "../utils/types.js";
 
 export enum TaskPhase {
   DOWNLOAD = 1,
-  PRIMARY = 2,
-  SECONDARY = 3,
+  LOAD_TSV = 2,
+  PRIMARY = 3,
+  SECONDARY = 4,
 }
 
 export interface TaskConfig {
@@ -16,6 +17,7 @@ export interface TaskConfig {
 
 export enum TaskName {
   DOWNLOAD = "DOWNLOAD",
+  LOAD_TSV = "LOAD_TSV",
   PARSE_PRIMARY = "PARSE_PRIMARY",
   PARSE_SECONDARY = "PARSE_SECONDARY",
   INSERT_DATA = "INSERT_DATA",
@@ -30,9 +32,15 @@ export interface Task<T = unknown> {
   createdAt: number;
 }
 
+export interface LoadTSVPayload {
+  filePath: string;
+  skip?: boolean;
+}
+
 export interface DownloadPayload {
   url: string;
   targetPath: string;
+  skipDownload: boolean;
 }
 
 export interface ParsePayload {
