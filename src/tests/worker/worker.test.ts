@@ -98,6 +98,17 @@ const runConsumerUntilDone = async (
   await done;
 };
 
+const createWorker = async (batchId: string, phase?: TaskPhase) => {
+  const { Producer: P } = await import("../../worker/producer.js");
+  const { Consumer: C } = await import("../../worker/consumer.js");
+  const { createHandlers } = await import("../../worker/handlers.js");
+
+  const producer = new P(batchId, cfg.task, redis, mysqlCmd);
+  const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
+  const consumer = new C(batchId, cfg.task, redis, mysqlCmd, producer, handlers, phase);
+  return { producer, handlers, consumer };
+};
+
 beforeAll(async () => {
   const { config } = await import("../../config/index.js");
   const { RedisDatabase: RDB } = await import("../../db/redis.js");
@@ -222,26 +233,7 @@ describe("Consumer - DOWNLOAD phase", () => {
   afterEach(() => cleanupBatch(batchId));
 
   it("transitions to PRIMARY when no DOWNLOAD tasks remain", async () => {
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(
-      redis,
-      mysqlCmd,
-      producer,
-      cfg.task.batchSize,
-    );
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.DOWNLOAD,
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.DOWNLOAD);
 
     // No DOWNLOAD tasks seeded → should transition phases and eventually stop
     const start = Date.now();
@@ -265,8 +257,8 @@ describe("Consumer - DOWNLOAD phase", () => {
     const { Producer: P } = await import("../../worker/producer.js");
     const { Consumer: C } = await import("../../worker/consumer.js");
 
-    // Override DOWNLOAD handler to avoid real HTTP download
     const producer = new P(batchId, cfg.task, redis, mysqlCmd);
+    // Override DOWNLOAD handler to avoid real HTTP download
     const handlers = {
       [TaskName.DOWNLOAD]: async (task: Task) => {
         // simulate: download done, produce PARSE_PRIMARY
@@ -287,15 +279,7 @@ describe("Consumer - DOWNLOAD phase", () => {
       },
     };
 
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.DOWNLOAD,
-    );
+    const consumer = new C(batchId, cfg.task, redis, mysqlCmd, producer, handlers, TaskPhase.DOWNLOAD);
 
     // Seed one DOWNLOAD task
     const downloadTask: Task = {
@@ -349,26 +333,7 @@ describe("Consumer - PRIMARY phase", () => {
       ].join("\n"),
     );
 
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(
-      redis,
-      mysqlCmd,
-      producer,
-      cfg.task.batchSize,
-    );
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.PRIMARY,
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.PRIMARY);
 
     const parseTask: Task<ParsePayload> = {
       batchId,
@@ -390,26 +355,7 @@ describe("Consumer - PRIMARY phase", () => {
   }, 15000);
 
   it("processes INSERT_DATA task: inserts TITLE_BASICS rows directly", async () => {
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(
-      redis,
-      mysqlCmd,
-      producer,
-      cfg.task.batchSize,
-    );
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.PRIMARY,
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.PRIMARY);
 
     const insertTask: Task<InsertPayload> = {
       batchId,
@@ -509,26 +455,7 @@ describe("Consumer - SECONDARY phase", () => {
       ].join("\n"),
     );
 
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(
-      redis,
-      mysqlCmd,
-      producer,
-      cfg.task.batchSize,
-    );
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.SECONDARY,
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.SECONDARY);
 
     const parseTask: Task<ParsePayload> = {
       batchId,
@@ -559,19 +486,7 @@ describe("Consumer - executeTask", () => {
 
   beforeEach(async () => {
     batchId = crypto.randomUUID();
-
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(
-      redis,
-      mysqlCmd,
-      producer,
-      cfg.task.batchSize,
-    );
-    consumer = new C(batchId, cfg.task, redis, mysqlCmd, producer, handlers);
+    ({ consumer } = await createWorker(batchId));
   });
 
   afterEach(() => cleanupBatch(batchId));

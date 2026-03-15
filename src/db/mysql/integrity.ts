@@ -6,75 +6,37 @@ interface IntegrityCheckResult {
   ok: boolean;
 }
 
+const dupCheck = (table: string, ...cols: string[]) =>
+  `SELECT COUNT(*) AS cnt FROM (
+     SELECT ${cols.join(", ")} FROM ${table} GROUP BY ${cols.join(", ")} HAVING COUNT(*) > 1
+   ) t`;
+
+const fkCheck = (
+  child: string,
+  childAlias: string,
+  childCol: string,
+  parent: string,
+  parentAlias: string,
+  parentCol: string,
+) =>
+  `SELECT COUNT(*) AS cnt FROM ${child} ${childAlias}
+   LEFT JOIN ${parent} ${parentAlias} ON ${childAlias}.${childCol} = ${parentAlias}.${parentCol}
+   WHERE ${parentAlias}.${parentCol} IS NULL`;
+
 const CHECKS: Array<{ name: string; sql: string }> = [
   // 중복 체크
-  {
-    name: "GENRES.name 중복",
-    sql: `SELECT COUNT(*) AS cnt FROM (
-            SELECT name FROM GENRES GROUP BY name HAVING COUNT(*) > 1
-          ) t`,
-  },
-  {
-    name: "TITLE_GENRES.(tconst, genre_id) 중복",
-    sql: `SELECT COUNT(*) AS cnt FROM (
-            SELECT tconst, genre_id FROM TITLE_GENRES GROUP BY tconst, genre_id HAVING COUNT(*) > 1
-          ) t`,
-  },
+  { name: "GENRES.name 중복",                       sql: dupCheck("GENRES", "name") },
+  { name: "TITLE_GENRES.(tconst, genre_id) 중복",   sql: dupCheck("TITLE_GENRES", "tconst", "genre_id") },
   // FK 고아 행 체크
-  {
-    name: "TITLE_GENRES.tconst → TITLES",
-    sql: `SELECT COUNT(*) AS cnt FROM TITLE_GENRES tg
-          LEFT JOIN TITLES t ON tg.tconst = t.tconst
-          WHERE t.tconst IS NULL`,
-  },
-  {
-    name: "TITLE_GENRES.genre_id → GENRES",
-    sql: `SELECT COUNT(*) AS cnt FROM TITLE_GENRES tg
-          LEFT JOIN GENRES g ON tg.genre_id = g.id
-          WHERE g.id IS NULL`,
-  },
-  {
-    name: "TITLE_AKAS.tconst → TITLES",
-    sql: `SELECT COUNT(*) AS cnt FROM TITLE_AKAS ta
-          LEFT JOIN TITLES t ON ta.tconst = t.tconst
-          WHERE t.tconst IS NULL`,
-  },
-  {
-    name: "RATINGS.tconst → TITLES",
-    sql: `SELECT COUNT(*) AS cnt FROM RATINGS r
-          LEFT JOIN TITLES t ON r.tconst = t.tconst
-          WHERE t.tconst IS NULL`,
-  },
-  {
-    name: "EPISODES.tconst → TITLES",
-    sql: `SELECT COUNT(*) AS cnt FROM EPISODES e
-          LEFT JOIN TITLES t ON e.tconst = t.tconst
-          WHERE t.tconst IS NULL`,
-  },
-  {
-    name: "EPISODES.parent_tconst → TITLES",
-    sql: `SELECT COUNT(*) AS cnt FROM EPISODES e
-          LEFT JOIN TITLES t ON e.parent_tconst = t.tconst
-          WHERE t.tconst IS NULL`,
-  },
-  {
-    name: "TITLE_CREW.tconst → TITLES",
-    sql: `SELECT COUNT(*) AS cnt FROM TITLE_CREW tc
-          LEFT JOIN TITLES t ON tc.tconst = t.tconst
-          WHERE t.tconst IS NULL`,
-  },
-  {
-    name: "TITLE_PRINCIPALS.tconst → TITLES",
-    sql: `SELECT COUNT(*) AS cnt FROM TITLE_PRINCIPALS tp
-          LEFT JOIN TITLES t ON tp.tconst = t.tconst
-          WHERE t.tconst IS NULL`,
-  },
-  {
-    name: "TITLE_PRINCIPALS.nconst → PERSONS",
-    sql: `SELECT COUNT(*) AS cnt FROM TITLE_PRINCIPALS tp
-          LEFT JOIN PERSONS p ON tp.nconst = p.nconst
-          WHERE p.nconst IS NULL`,
-  },
+  { name: "TITLE_GENRES.tconst → TITLES",           sql: fkCheck("TITLE_GENRES",    "tg", "tconst",        "TITLES",  "t", "tconst") },
+  { name: "TITLE_GENRES.genre_id → GENRES",         sql: fkCheck("TITLE_GENRES",    "tg", "genre_id",      "GENRES",  "g", "id") },
+  { name: "TITLE_AKAS.tconst → TITLES",             sql: fkCheck("TITLE_AKAS",      "ta", "tconst",        "TITLES",  "t", "tconst") },
+  { name: "RATINGS.tconst → TITLES",                sql: fkCheck("RATINGS",         "r",  "tconst",        "TITLES",  "t", "tconst") },
+  { name: "EPISODES.tconst → TITLES",               sql: fkCheck("EPISODES",        "e",  "tconst",        "TITLES",  "t", "tconst") },
+  { name: "EPISODES.parent_tconst → TITLES",        sql: fkCheck("EPISODES",        "e",  "parent_tconst", "TITLES",  "t", "tconst") },
+  { name: "TITLE_CREW.tconst → TITLES",             sql: fkCheck("TITLE_CREW",      "tc", "tconst",        "TITLES",  "t", "tconst") },
+  { name: "TITLE_PRINCIPALS.tconst → TITLES",       sql: fkCheck("TITLE_PRINCIPALS","tp", "tconst",        "TITLES",  "t", "tconst") },
+  { name: "TITLE_PRINCIPALS.nconst → PERSONS",      sql: fkCheck("TITLE_PRINCIPALS","tp", "nconst",        "PERSONS", "p", "nconst") },
 ];
 
 export class MysqlIntegrity {
