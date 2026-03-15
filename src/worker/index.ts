@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { Tconfig } from "../config/index.js";
 import { MysqlCommand, type RedisDatabase } from "../db/index.js";
+import { MysqlIntegrity } from "../db/mysql/integrity.js";
 import { Consumer } from "./consumer.js";
 import { createHandlers } from "./handlers.js";
 import { Producer } from "./producer.js";
@@ -34,44 +35,27 @@ export const runPipeline = async (
     await triggerDownload(
       cfg,
       producer,
-      options ?? { skipDownload: false, skipLoadTSV: false },
+      options ?? { skipDownload: false, skipLoadTSV: false, skipNormalization: false, skipIntegrityCheck: false },
     );
     await consumer.start();
-    console.log("load까지 끝");
+    console.log("[pipe] loading data done");
   }
 
-  await normalizePrimary(mysqlCmd);
-  await normalizeSecondary(mysqlCmd);
+  if (!options?.skipNormalization) {
+    await normalizePrimary(mysqlCmd);
+    await normalizeSecondary(mysqlCmd);
+    console.log("[pipe] data normalization done");
+  }
+
+  if (!options?.skipIntegrityCheck) {
+    console.log("[pipe] running integrity check...");
+    console.time("integrity");
+    const results = await mysqlCmd.integrity.checkAll();
+    console.timeEnd("integrity");
+    MysqlIntegrity.printResults(results);
+  }
 };
 
-// export const runPipeline = async ( cfg: Tconfig, mysqlCmd: MysqlCommand,
-//   redis: RedisDatabase,
-//   options?: PipelineOptions,
-// ) => {
-//   const batchId = crypto.randomUUID();
-//   const producer = new Producer(batchId, cfg.task, redis, mysqlCmd);
-//   const handlers = createHandlers(
-//     redis,
-//     mysqlCmd,
-//     producer,
-//     cfg.task.batchSize,
-//   );
-//   const consumer = new Consumer(
-//     batchId,
-//     cfg.task,
-//     redis,
-//     mysqlCmd,
-//     producer,
-//     handlers,
-//   );
-//
-//   if (!options?.skipDownload) {
-//     await triggerDownload(cfg, producer);
-//   }
-//
-//   await consumer.start();
-// };
-//
 const triggerDownload = async (
   cfg: Tconfig,
   producer: Producer,

@@ -3,11 +3,13 @@ import { config } from "../../config/index.js";
 import { MysqlDatabase } from "../../db/mysql/connection.js";
 import { MysqlCommand } from "../../db/mysql/commands.js";
 import { OpenSearchDatabase } from "../../db/opensearch/index.js";
+import { RedisDatabase } from "../../db/redis.js";
 import { runIndexPipeline } from "../../worker/indexer.js";
 
 const mysqlDb = new MysqlDatabase(config.db.mysql);
 const mysqlCmd = await MysqlCommand.create(mysqlDb.getPool());
 const osDb = new OpenSearchDatabase(config.db.opensearch);
+const redis = await RedisDatabase.create(config.db.redis);
 const pool = mysqlDb.getPool();
 
 async function seed() {
@@ -157,12 +159,15 @@ async function verify() {
 try {
   await seed();
   await runIndexPipeline({
-    mysqlPool: pool,
+    cfg: config,
+    mysqlCmd,
+    redis,
     osClient: osDb.getClient(),
     recreateIndex: true,
   });
   await verify();
 } finally {
+  await redis.close();
   await mysqlDb.close();
   await osDb.close();
 }

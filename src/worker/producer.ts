@@ -4,6 +4,7 @@ import {
   type TaskConfig,
   type Task,
   type DownloadPayload,
+  type IndexBatchPayload,
   TaskName,
   TaskPhase,
 } from "./types.js";
@@ -58,6 +59,41 @@ export class Producer {
   // TODO: need phase?
   async schedule(task: Task, phase: TaskPhase) {
     await this.mysqlCmd.insertTask(task, phase);
+  }
+
+  private async scheduleOneIndexTask(fromTconst: string | null, batchSize: number): Promise<string | null> {
+    const tconsts = await this.mysqlCmd.fetchTconstPage(fromTconst, batchSize);
+    if (tconsts.length === 0) return null;
+
+    await this.schedule(
+      {
+        batchId: this.batchId,
+        taskId: crypto.randomUUID(),
+        name: TaskName.INDEX_BATCH,
+        payload: { fromTconst, limit: batchSize } satisfies IndexBatchPayload,
+        retryCount: 0,
+        createdAt: Date.now(),
+      },
+      TaskPhase.INDEX,
+    );
+
+    return tconsts.length < batchSize ? null : tconsts[tconsts.length - 1]!;
+  }
+
+  async scheduleIndexTasks(batchSize: number, fromCursor: string | null): Promise<void> {
+    let cursor: string | null = fromCursor;
+    let scheduled = 0;
+
+    while (cursor !== null) {
+      cursor = await this.scheduleOneIndexTask(cursor, batchSize);
+      scheduled++;
+    }
+
+    console.log(`[producer] scheduled ${scheduled} remaining INDEX_BATCH tasks`);
+  }
+
+  async scheduleFirstIndexTask(batchSize: number): Promise<string | null> {
+    return this.scheduleOneIndexTask(null, batchSize);
   }
 
   async refill(phase: TaskPhase, limit: number): Promise<number> {

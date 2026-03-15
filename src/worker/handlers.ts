@@ -1,6 +1,9 @@
 import path from "node:path";
+import type { Client } from "@opensearch-project/opensearch";
+import { OpenSearchCommand } from "../db/opensearch/commands.js";
 import type { MysqlCommand } from "../db/index.js";
 import type { RedisDatabase } from "../db/redis.js";
+import { fetchTitleBatch } from "../db/mysql/queries.js";
 import { downloadFile } from "../utils/download.js";
 import { getDatasetInfoByFileName } from "../utils/helpers.js";
 import { generateTSVlines } from "../utils/parse.js";
@@ -10,6 +13,7 @@ import {
   TaskName,
   TaskPhase,
   type DownloadPayload,
+  type IndexBatchPayload,
   type InsertPayload,
   type LoadTSVPayload,
   type ParsePayload,
@@ -25,8 +29,10 @@ export const createHandlers = (
   mysqlCmd: MysqlCommand,
   producer: Producer,
   batchSize: number,
+  osClient?: Client,
 ): TaskHandlerMap => {
   const redisClient = redis.getClient();
+  const osCmd = osClient ? new OpenSearchCommand(osClient) : null;
 
   return {
     [TaskName.DOWNLOAD]: async (task: Task) => {
@@ -87,6 +93,13 @@ export const createHandlers = (
       const start = Date.now();
       await mysqlCmd.loadInfIle(filePath);
       console.log(`[load] ${fileName}: done (${Date.now() - start}ms)`);
+    },
+
+    [TaskName.INDEX_BATCH]: async (task: Task) => {
+      if (!osCmd) throw new Error("osClient not provided to createHandlers");
+      const { fromTconst, limit } = task.payload as IndexBatchPayload;
+      const docs = await fetchTitleBatch(mysqlCmd.getPool(), fromTconst, limit);
+      if (docs.length > 0) await osCmd.bulkIndex(docs);
     },
 
     // [TaskName.PARSE_PRIMARY]: async (task: Task) => {

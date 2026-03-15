@@ -54,14 +54,8 @@
 
 ---
 
-## 추가 최적화 방안 (미적용)
+## 추가 최적화 적용
 
-현재도 입력 속도가 느린 원인으로 두 가지를 파악:
+FK 제약 오버헤드, JS 파싱 오버헤드를 `LOAD DATA LOCAL INFILE` + staging 테이블 방식으로 해결했다.
 
-1. **인덱스 오버헤드** — 삽입 시마다 인덱스 갱신 발생
-2. **FK 제약 오버헤드** — 참조 무결성 검사로 추가 I/O 발생
-
-**개선 방향:**
-
-- FK, 인덱스 비활성화 → `LOAD DATA INFILE`로 TSV 직접 적재 → 이후 인덱스/FK 재활성화
-- MySQL 네이티브 기능 활용으로 상당한 속도 향상 기대
+→ [`decision-insertion-optimization.md`](decision-insertion-optimization.md) 참고

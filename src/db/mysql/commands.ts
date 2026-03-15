@@ -59,6 +59,10 @@ export class MysqlCommand {
   readonly normalize;
   readonly integrity;
 
+  getPool() {
+    return this.pool;
+  }
+
   constructor(pool: mysql.Pool, genresMap?: Map<string, number>) {
     this.genresMap = genresMap || new Map();
     this.pool = pool;
@@ -328,6 +332,24 @@ export class MysqlCommand {
     } catch (err) {
       console.error(`insert title principals error: ${(err as Error).message}`);
       throw err;
+    }
+  }
+
+  async fetchTconstPage(fromTconst: string | null, limit: number): Promise<string[]> {
+    const conn = await this.pool.getConnection();
+    try {
+      const [rows] = fromTconst === null
+        ? await conn.query<mysql.RowDataPacket[]>(
+            `SELECT tconst FROM TITLES ORDER BY tconst LIMIT ?`,
+            [limit],
+          )
+        : await conn.query<mysql.RowDataPacket[]>(
+            `SELECT tconst FROM TITLES WHERE tconst > ? ORDER BY tconst LIMIT ?`,
+            [fromTconst, limit],
+          );
+      return rows.map((r) => r.tconst as string);
+    } finally {
+      conn.release();
     }
   }
 

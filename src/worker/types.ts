@@ -5,6 +5,7 @@ export enum TaskPhase {
   LOAD_TSV = 2,
   PRIMARY = 3,
   SECONDARY = 4,
+  INDEX = 5,
 }
 
 export interface TaskConfig {
@@ -21,6 +22,7 @@ export enum TaskName {
   PARSE_PRIMARY = "PARSE_PRIMARY",
   PARSE_SECONDARY = "PARSE_SECONDARY",
   INSERT_DATA = "INSERT_DATA",
+  INDEX_BATCH = "INDEX_BATCH",
 }
 
 export interface Task<T = unknown> {
@@ -55,6 +57,11 @@ export interface InsertPayload {
   data: unknown[];
 }
 
+export interface IndexBatchPayload {
+  fromTconst: string | null;
+  limit: number;
+}
+
 export const isValidTask = (task: any): task is Task => {
   return (
     task &&
@@ -68,4 +75,6 @@ export const isValidTask = (task: any): task is Task => {
 export interface PipelineOptions {
   skipDownload: boolean;
   skipLoadTSV: boolean;
+  skipNormalization: boolean;
+  skipIntegrityCheck: boolean;
 }

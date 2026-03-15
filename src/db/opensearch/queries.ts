@@ -74,17 +74,28 @@ export class OpenSearchQuery {
         bool: {
           must: [
             {
-              multi_match: {
-                query: q,
-                fields: [
-                  "primary_title^3",
-                  "original_title^2",
-                  "korean_title^2",
-                  "cast.name",
-                  "directors.name",
+              bool: {
+                should: [
+                  {
+                    multi_match: {
+                      query: q,
+                      fields: [
+                        "primary_title^3",
+                        "original_title^2",
+                        "cast.name",
+                        "directors.name",
+                      ],
+                      type: "best_fields",
+                      fuzziness: "AUTO",
+                    },
+                  },
+                  {
+                    match: {
+                      korean_title: { query: q, boost: 3 },
+                    },
+                  },
                 ],
-                type: "best_fields",
-                fuzziness: "AUTO",
+                minimum_should_match: 1,
               },
             },
           ],

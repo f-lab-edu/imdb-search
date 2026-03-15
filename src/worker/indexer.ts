@@ -1,45 +1,63 @@
-import type mysql from "mysql2/promise";
 import type { Client } from "@opensearch-project/opensearch";
+import type { Tconfig } from "../config/index.js";
+import type { MysqlCommand } from "../db/index.js";
+import type { RedisDatabase } from "../db/redis.js";
 import { OpenSearchCommand } from "../db/opensearch/commands.js";
-import { fetchTitleDocuments } from "../db/mysql/queries.js";
+import { Consumer } from "./consumer.js";
+import { createHandlers } from "./handlers.js";
+import { Producer } from "./producer.js";
+import { TaskPhase } from "./types.js";
 
 interface IndexPipelineConfig {
-  mysqlPool: mysql.Pool;
+  cfg: Tconfig;
+  mysqlCmd: MysqlCommand;
+  redis: RedisDatabase;
   osClient: Client;
-  batchSize?: number;
   recreateIndex?: boolean;
 }
 
 export const runIndexPipeline = async ({
-  mysqlPool,
+  cfg,
+  mysqlCmd,
+  redis,
   osClient,
-  batchSize = 5000,
   recreateIndex = false,
 }: IndexPipelineConfig) => {
   const osCmd = new OpenSearchCommand(osClient);
-
   await osCmd.createIndex(recreateIndex);
 
-  let totalIndexed = 0;
-  let batchCount = 0;
+  const batchId = crypto.randomUUID();
+  const producer = new Producer(batchId, cfg.task, redis, mysqlCmd);
+  const handlers = createHandlers(
+    redis,
+    mysqlCmd,
+    producer,
+    cfg.task.batchSize,
+    osClient,
+  );
+  const consumer = new Consumer(
+    batchId,
+    cfg.task,
+    redis,
+    mysqlCmd,
+    producer,
+    handlers,
+    TaskPhase.INDEX,
+  );
 
-  console.log("[indexer] starting opensearch indexing from mysql");
+  console.time("indexer:schedule");
+  const firstCursor = await producer.scheduleFirstIndexTask(cfg.task.batchSize);
+
+  const schedulePromise = (
+    firstCursor !== null
+      ? producer.scheduleIndexTasks(cfg.task.batchSize, firstCursor)
+      : Promise.resolve()
+  ).then(() => console.timeEnd("indexer:schedule"));
+
   console.time("indexer");
+  const consumerPromise = consumer
+    .start()
+    .then(() => console.timeEnd("indexer"));
 
-  try {
-    for await (const batch of fetchTitleDocuments(mysqlPool, batchSize)) {
-      await osCmd.bulkIndex(batch);
-      totalIndexed += batch.length;
-      batchCount++;
-
-      if (batchCount % 10 === 0) {
-        console.log(`[indexer] progress: ${totalIndexed.toLocaleString()} documents indexed`);
-      }
-    }
-  } finally {
-    console.timeEnd("indexer");
-  }
-
-  console.log(`[indexer] done. ${totalIndexed.toLocaleString()} documents indexed`);
-  return { totalIndexed };
+  await Promise.all([schedulePromise, consumerPromise]);
 };
