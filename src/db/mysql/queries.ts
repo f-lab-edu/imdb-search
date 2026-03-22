@@ -1,5 +1,9 @@
 import type mysql from "mysql2/promise";
-import type { TitleDocument, CastMember, PersonRef } from "../opensearch/commands.js";
+import type {
+  TitleDocument,
+  CastMember,
+  PersonRef,
+} from "../opensearch/commands.js";
 
 interface RawTitle {
   tconst: string;
@@ -53,15 +57,15 @@ export class MysqlQuery {
       const [titles] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT tconst, title_type, primary_title, original_title, is_adult, start_year, end_year, runtime_minutes
          FROM TITLES WHERE tconst = ?`,
-        [tconst]
+        [tconst],
       );
       const [genres] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT g.name FROM TITLE_GENRES tg JOIN GENRES g ON tg.genre_id = g.id WHERE tg.tconst = ?`,
-        [tconst]
+        [tconst],
       );
       const [ratings] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT average_rating, num_votes FROM RATINGS WHERE tconst = ?`,
-        [tconst]
+        [tconst],
       );
       const [principals] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT tp.nconst, p.primary_name, tp.category, tp.job, tp.characters
@@ -70,11 +74,11 @@ export class MysqlQuery {
          WHERE tp.tconst = ?
          GROUP BY tp.ordering, tp.nconst, tp.category
          ORDER BY tp.ordering ASC`,
-        [tconst]
+        [tconst],
       );
       const [crew] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT directors, writers FROM TITLE_CREW WHERE tconst = ?`,
-        [tconst]
+        [tconst],
       );
 
       const title = titles[0];
@@ -94,9 +98,11 @@ export class MysqlQuery {
       if (allNconsts.length > 0) {
         const [persons] = await conn.query<mysql.RowDataPacket[]>(
           `SELECT nconst, primary_name FROM PERSONS WHERE nconst IN (?)`,
-          [allNconsts]
+          [allNconsts],
         );
-        (persons as mysql.RowDataPacket[]).forEach((p) => personMap.set(p.nconst, p.primary_name));
+        (persons as mysql.RowDataPacket[]).forEach((p) =>
+          personMap.set(p.nconst, p.primary_name),
+        );
       }
 
       const rating = ratings[0] ?? null;
@@ -112,11 +118,20 @@ export class MysqlQuery {
         runtime_minutes: title.runtime_minutes as number | null,
         genres: genres.map((g) => g.name as string),
         rating: rating
-          ? { average: Number(rating.average_rating), votes: rating.num_votes as number }
+          ? {
+              average: Number(rating.average_rating),
+              votes: rating.num_votes as number,
+            }
           : null,
         crew: {
-          directors: directorNconsts.map((n) => ({ nconst: n, name: personMap.get(n) ?? null })),
-          writers: writerNconsts.map((n) => ({ nconst: n, name: personMap.get(n) ?? null })),
+          directors: directorNconsts.map((n) => ({
+            nconst: n,
+            name: personMap.get(n) ?? null,
+          })),
+          writers: writerNconsts.map((n) => ({
+            nconst: n,
+            name: personMap.get(n) ?? null,
+          })),
         },
         principals: principals.map((p) => ({
           nconst: p.nconst as string,
@@ -138,7 +153,7 @@ export class MysqlQuery {
       const [persons] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT nconst, primary_name, birth_year, death_year, primary_profession
          FROM PERSONS WHERE nconst = ?`,
-        [nconst]
+        [nconst],
       );
       const [credits] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT tp.tconst, t.primary_title, t.title_type, t.start_year, tp.category, tp.characters
@@ -147,7 +162,7 @@ export class MysqlQuery {
          WHERE tp.nconst = ?
          ORDER BY t.start_year DESC
          LIMIT 50`,
-        [nconst]
+        [nconst],
       );
 
       const person = persons[0];
@@ -215,11 +230,15 @@ async function buildTitleDocuments(
       `SELECT nconst, primary_name FROM PERSONS WHERE nconst IN (?)`,
       [[...nconsts]],
     );
-    (persons as RawPerson[]).forEach((p) => personsMap.set(p.nconst, p.primary_name));
+    (persons as RawPerson[]).forEach((p) =>
+      personsMap.set(p.nconst, p.primary_name),
+    );
   }
 
   const koreanMap = new Map<string, string>();
-  (koreanTitles as RawKoreanTitle[]).forEach((k) => koreanMap.set(k.tconst, k.title));
+  (koreanTitles as RawKoreanTitle[]).forEach((k) =>
+    koreanMap.set(k.tconst, k.title),
+  );
 
   const genreMap = new Map<string, string[]>();
   (genres as RawGenre[]).forEach((g) => {
@@ -231,17 +250,27 @@ async function buildTitleDocuments(
   const castMap = new Map<string, CastMember[]>();
   (cast as RawCast[]).forEach((c) => {
     const list = castMap.get(c.tconst) ?? [];
-    list.push({ nconst: c.nconst, name: c.name, category: c.category, characters: c.characters });
+    list.push({
+      nconst: c.nconst,
+      name: c.name,
+      category: c.category,
+      characters: c.characters,
+    });
     castMap.set(c.tconst, list);
   });
 
-  const crewMap = new Map<string, { directors: PersonRef[]; writers: PersonRef[] }>();
+  const crewMap = new Map<
+    string,
+    { directors: PersonRef[]; writers: PersonRef[] }
+  >();
   (crew as RawCrew[]).forEach((c) => {
     const directors: PersonRef[] = (c.directors?.split(",") ?? [])
-      .map((n) => n.trim()).filter((n) => personsMap.has(n))
+      .map((n) => n.trim())
+      .filter((n) => personsMap.has(n))
       .map((n) => ({ nconst: n, name: personsMap.get(n)! }));
     const writers: PersonRef[] = (c.writers?.split(",") ?? [])
-      .map((n) => n.trim()).filter((n) => personsMap.has(n))
+      .map((n) => n.trim())
+      .filter((n) => personsMap.has(n))
       .map((n) => ({ nconst: n, name: personsMap.get(n)! }));
     crewMap.set(c.tconst, { directors, writers });
   });
@@ -273,25 +302,26 @@ export async function fetchTitleBatch(
   const conn = await pool.getConnection();
 
   try {
-    const [titles] = fromTconst === null
-      ? await conn.query<mysql.RowDataPacket[]>(
-          `SELECT t.tconst, t.primary_title, t.original_title, t.title_type,
+    const [titles] =
+      fromTconst === null
+        ? await conn.query<mysql.RowDataPacket[]>(
+            `SELECT t.tconst, t.primary_title, t.original_title, t.title_type,
                   t.start_year, t.end_year, t.runtime_minutes, t.is_adult,
                   r.average_rating, r.num_votes
            FROM TITLES t LEFT JOIN RATINGS r ON t.tconst = r.tconst
            ORDER BY t.tconst LIMIT ?`,
-          [limit],
-        )
-      : await conn.query<mysql.RowDataPacket[]>(
-          `SELECT t.tconst, t.primary_title, t.original_title, t.title_type,
+            [limit],
+          )
+        : await conn.query<mysql.RowDataPacket[]>(
+            `SELECT t.tconst, t.primary_title, t.original_title, t.title_type,
                   t.start_year, t.end_year, t.runtime_minutes, t.is_adult,
                   r.average_rating, r.num_votes
            FROM TITLES t LEFT JOIN RATINGS r ON t.tconst = r.tconst
            WHERE t.tconst > ? ORDER BY t.tconst LIMIT ?`,
-          [fromTconst, limit],
-        );
+            [fromTconst, limit],
+          );
 
-    return buildTitleDocuments(conn, titles as RawTitle[]);
+    return await buildTitleDocuments(conn, titles as RawTitle[]);
   } finally {
     conn.release();
   }
