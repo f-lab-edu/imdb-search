@@ -1,4 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "@jest/globals";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "@jest/globals";
 import dotenv from "dotenv";
 dotenv.config({ path: ".env.test" });
 
@@ -24,7 +32,9 @@ let mysqlDb: MysqlDatabase;
 let mysqlCmd: MysqlCommand;
 let pool: mysql.Pool;
 let tmpDir: string;
+
 import type { config as Config } from "../../config/index.js";
+
 let cfg: typeof Config;
 
 const MAIN_QUEUE = "task_main_queue";
@@ -57,7 +67,9 @@ const cleanupTitles = async (tconsts: string[]) => {
     await conn.query("DELETE FROM TITLE_AKAS WHERE tconst IN (?)", [tconsts]);
     await conn.query("DELETE FROM RATINGS WHERE tconst IN (?)", [tconsts]);
     await conn.query("DELETE FROM TITLE_CREW WHERE tconst IN (?)", [tconsts]);
-    await conn.query("DELETE FROM TITLE_PRINCIPALS WHERE tconst IN (?)", [tconsts]);
+    await conn.query("DELETE FROM TITLE_PRINCIPALS WHERE tconst IN (?)", [
+      tconsts,
+    ]);
     await conn.query("DELETE FROM EPISODES WHERE tconst IN (?)", [tconsts]);
     await conn.query("DELETE FROM TITLES WHERE tconst IN (?)", [tconsts]);
     await conn.query("SET FOREIGN_KEY_CHECKS = 1");
@@ -76,11 +88,25 @@ const cleanupPersons = async (nconsts: string[]) => {
   }
 };
 
-const runConsumerUntilDone = async (consumer: Consumer, timeoutMs = 5000): Promise<void> => {
+const runConsumerUntilDone = async (
+  consumer: Consumer,
+  timeoutMs = 5000,
+): Promise<void> => {
   const done = consumer.start();
   await new Promise((res) => setTimeout(res, timeoutMs));
   consumer.stop();
   await done;
+};
+
+const createWorker = async (batchId: string, phase?: TaskPhase) => {
+  const { Producer: P } = await import("../../worker/producer.js");
+  const { Consumer: C } = await import("../../worker/consumer.js");
+  const { createHandlers } = await import("../../worker/handlers.js");
+
+  const producer = new P(batchId, cfg.task, redis, mysqlCmd);
+  const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
+  const consumer = new C(batchId, cfg.task, redis, mysqlCmd, producer, handlers, phase);
+  return { producer, handlers, consumer };
 };
 
 beforeAll(async () => {
@@ -120,7 +146,11 @@ describe("Producer", () => {
   afterEach(() => cleanupBatch(batchId));
 
   it("produceDownloadTask: writes DOWNLOAD task to MySQL with phase=DOWNLOAD", async () => {
-    await producer.produceDownloadTask("https://example.com/file.tsv.gz", `.randomUUID()}.tsv`);
+    await producer.produceDownloadTask(
+      "https://example.com/file.tsv.gz",
+      `.randomUUID()}.tsv`,
+      { skipDownload: false, skipLoadTSV: false, skipNormalization: false, skipIntegrityCheck: false },
+    );
 
     const tasks = await mysqlCmd.fetchPendingTasks(TaskPhase.DOWNLOAD, 10);
     const task = tasks.find((t) => t.batchId === batchId);
@@ -138,7 +168,7 @@ describe("Producer", () => {
       createdAt: Date.now(),
     };
 
-    await producer.produce(task, TaskPhase.PRIMARY);
+    await producer.schedule(task, TaskPhase.PRIMARY);
 
     const tasks = await mysqlCmd.fetchPendingTasks(TaskPhase.PRIMARY, 10);
     const found = tasks.find((t) => t.taskId === task.taskId);
@@ -203,21 +233,7 @@ describe("Consumer - DOWNLOAD phase", () => {
   afterEach(() => cleanupBatch(batchId));
 
   it("transitions to PRIMARY when no DOWNLOAD tasks remain", async () => {
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.DOWNLOAD
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.DOWNLOAD);
 
     // No DOWNLOAD tasks seeded → should transition phases and eventually stop
     const start = Date.now();
@@ -235,47 +251,45 @@ describe("Consumer - DOWNLOAD phase", () => {
       [
         "tconst\ttitleType\tprimaryTitle\toriginalTitle\tisAdult\tstartYear\tendYear\truntimeMinutes\tgenres",
         "tt8880001\tmovie\tDownload Test\tDownload Test\t0\t2024\t\\N\t90\tDrama",
-      ].join("\n")
+      ].join("\n"),
     );
 
     const { Producer: P } = await import("../../worker/producer.js");
     const { Consumer: C } = await import("../../worker/consumer.js");
 
-    // Override DOWNLOAD handler to avoid real HTTP download
     const producer = new P(batchId, cfg.task, redis, mysqlCmd);
+    // Override DOWNLOAD handler to avoid real HTTP download
     const handlers = {
       [TaskName.DOWNLOAD]: async (task: Task) => {
         // simulate: download done, produce PARSE_PRIMARY
-        await producer.produce(
+        await producer.schedule(
           {
             batchId: task.batchId,
             taskId: crypto.randomUUID(),
             name: TaskName.PARSE_PRIMARY,
-            payload: { filePath, datasetType: "TITLE_BASICS" } satisfies ParsePayload,
+            payload: {
+              filePath,
+              datasetType: "TITLE_BASICS",
+            } satisfies ParsePayload,
             retryCount: 0,
             createdAt: Date.now(),
           },
-          TaskPhase.PRIMARY
+          TaskPhase.PRIMARY,
         );
       },
     };
 
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.DOWNLOAD
-    );
+    const consumer = new C(batchId, cfg.task, redis, mysqlCmd, producer, handlers, TaskPhase.DOWNLOAD);
 
     // Seed one DOWNLOAD task
     const downloadTask: Task = {
       batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.DOWNLOAD,
-      payload: { url: "https://example.com/title.basics.tsv.gz", targetPath: filePath },
+      payload: {
+        url: "https://example.com/title.basics.tsv.gz",
+        targetPath: filePath,
+      },
       retryCount: 0,
       createdAt: Date.now(),
     };
@@ -286,7 +300,7 @@ describe("Consumer - DOWNLOAD phase", () => {
     // PARSE_PRIMARY task should exist in TASKS table (any status — it may have been refilled)
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       "SELECT name FROM TASKS WHERE batch_id = ? AND name = ?",
-      [batchId, TaskName.PARSE_PRIMARY]
+      [batchId, TaskName.PARSE_PRIMARY],
     );
     expect(rows.length).toBeGreaterThan(0);
   }, 10000);
@@ -316,24 +330,10 @@ describe("Consumer - PRIMARY phase", () => {
         `${testTconsts[0]}\tmovie\tPrimary Test 1\tPrimary Test 1\t0\t2020\t\\N\t90\tAction,Drama`,
         `${testTconsts[1]}\tmovie\tPrimary Test 2\tPrimary Test 2\t0\t2021\t\\N\t100\tComedy`,
         `${testTconsts[2]}\tshort\tPrimary Test 3\tPrimary Test 3\t0\t2022\t\\N\t15\tDocumentary`,
-      ].join("\n")
+      ].join("\n"),
     );
 
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.PRIMARY
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.PRIMARY);
 
     const parseTask: Task<ParsePayload> = {
       batchId,
@@ -349,27 +349,13 @@ describe("Consumer - PRIMARY phase", () => {
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       "SELECT tconst FROM TITLES WHERE tconst IN (?) ORDER BY tconst",
-      [testTconsts]
+      [testTconsts],
     );
     expect(rows.length).toBe(3);
   }, 15000);
 
   it("processes INSERT_DATA task: inserts TITLE_BASICS rows directly", async () => {
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.PRIMARY
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.PRIMARY);
 
     const insertTask: Task<InsertPayload> = {
       batchId,
@@ -399,7 +385,7 @@ describe("Consumer - PRIMARY phase", () => {
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       "SELECT tconst FROM TITLES WHERE tconst = ?",
-      [testTconsts[0]]
+      [testTconsts[0]],
     );
     expect(rows.length).toBe(1);
   }, 10000);
@@ -466,24 +452,10 @@ describe("Consumer - SECONDARY phase", () => {
         "tconst\taverageRating\tnumVotes",
         `${testTconsts[0]}\t8.5\t1000`,
         `${testTconsts[1]}\t7.2\t500`,
-      ].join("\n")
+      ].join("\n"),
     );
 
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
-    const consumer = new C(
-      batchId,
-      cfg.task,
-      redis,
-      mysqlCmd,
-      producer,
-      handlers,
-      TaskPhase.SECONDARY
-    );
+    const { consumer } = await createWorker(batchId, TaskPhase.SECONDARY);
 
     const parseTask: Task<ParsePayload> = {
       batchId,
@@ -499,7 +471,7 @@ describe("Consumer - SECONDARY phase", () => {
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       "SELECT tconst FROM RATINGS WHERE tconst IN (?) ORDER BY tconst",
-      [testTconsts]
+      [testTconsts],
     );
     expect(rows.length).toBe(2);
   }, 15000);
@@ -514,14 +486,7 @@ describe("Consumer - executeTask", () => {
 
   beforeEach(async () => {
     batchId = crypto.randomUUID();
-
-    const { Producer: P } = await import("../../worker/producer.js");
-    const { Consumer: C } = await import("../../worker/consumer.js");
-    const { createHandlers } = await import("../../worker/handlers.js");
-
-    const producer = new P(batchId, cfg.task, redis, mysqlCmd);
-    const handlers = createHandlers(redis, mysqlCmd, producer, cfg.task.batchSize);
-    consumer = new C(batchId, cfg.task, redis, mysqlCmd, producer, handlers);
+    ({ consumer } = await createWorker(batchId));
   });
 
   afterEach(() => cleanupBatch(batchId));
@@ -531,7 +496,10 @@ describe("Consumer - executeTask", () => {
       batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.INSERT_DATA,
-      payload: { datasetType: "INVALID_TYPE" as any, data: [{ tconst: "tt0000001" }] },
+      payload: {
+        datasetType: "INVALID_TYPE" as any,
+        data: [{ tconst: "tt0000001" }],
+      },
       retryCount: 0,
       createdAt: Date.now(),
     };
@@ -552,7 +520,10 @@ describe("Consumer - executeTask", () => {
       batchId,
       taskId: crypto.randomUUID(),
       name: TaskName.INSERT_DATA,
-      payload: { datasetType: "INVALID_TYPE" as any, data: [{ tconst: "tt0000001" }] },
+      payload: {
+        datasetType: "INVALID_TYPE" as any,
+        data: [{ tconst: "tt0000001" }],
+      },
       retryCount: cfg.task.maxRetry, // already at max
       createdAt: Date.now(),
     };
@@ -570,7 +541,9 @@ describe("Consumer - executeTask", () => {
   });
 
   it("silently ignores invalid JSON", async () => {
-    await expect(consumer.executeTask("not-valid-json{")).resolves.toBeUndefined();
+    await expect(
+      consumer.executeTask("not-valid-json{"),
+    ).resolves.toBeUndefined();
   });
 
   it("silently ignores task with no registered handler", async () => {
@@ -588,8 +561,17 @@ describe("Consumer - executeTask", () => {
 
     const producer = new P(batchId, cfg.task, redis, mysqlCmd);
     const emptyHandlers = {}; // no handlers registered
-    const bareConsumer = new C(batchId, cfg.task, redis, mysqlCmd, producer, emptyHandlers);
+    const bareConsumer = new C(
+      batchId,
+      cfg.task,
+      redis,
+      mysqlCmd,
+      producer,
+      emptyHandlers,
+    );
 
-    await expect(bareConsumer.executeTask(JSON.stringify(task))).resolves.toBeUndefined();
+    await expect(
+      bareConsumer.executeTask(JSON.stringify(task)),
+    ).resolves.toBeUndefined();
   });
 });

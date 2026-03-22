@@ -2,8 +2,10 @@ import type { DatasetKey } from "../utils/types.js";
 
 export enum TaskPhase {
   DOWNLOAD = 1,
-  PRIMARY = 2,
-  SECONDARY = 3,
+  LOAD_TSV = 2,
+  PRIMARY = 3,
+  SECONDARY = 4,
+  INDEX = 5,
 }
 
 export interface TaskConfig {
@@ -16,9 +18,11 @@ export interface TaskConfig {
 
 export enum TaskName {
   DOWNLOAD = "DOWNLOAD",
+  LOAD_TSV = "LOAD_TSV",
   PARSE_PRIMARY = "PARSE_PRIMARY",
   PARSE_SECONDARY = "PARSE_SECONDARY",
   INSERT_DATA = "INSERT_DATA",
+  INDEX_BATCH = "INDEX_BATCH",
 }
 
 export interface Task<T = unknown> {
@@ -33,6 +37,13 @@ export interface Task<T = unknown> {
 export interface DownloadPayload {
   url: string;
   targetPath: string;
+  skipDownload: boolean;
+  skipLoad?: boolean;
+}
+
+export interface LoadTSVPayload {
+  filePath: string;
+  skip?: boolean;
 }
 
 export interface ParsePayload {
@@ -46,6 +57,11 @@ export interface InsertPayload {
   data: unknown[];
 }
 
+export interface IndexBatchPayload {
+  fromTconst: string | null;
+  limit: number;
+}
+
 export const isValidTask = (task: any): task is Task => {
   return (
     task &&
@@ -57,5 +73,8 @@ export const isValidTask = (task: any): task is Task => {
 };
 
 export interface PipelineOptions {
-  skipDownload?: boolean;
+  skipDownload: boolean;
+  skipLoadTSV: boolean;
+  skipNormalization: boolean;
+  skipIntegrityCheck: boolean;
 }

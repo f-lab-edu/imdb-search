@@ -3,7 +3,7 @@ import { Client, type ClientOptions } from "@opensearch-project/opensearch";
 export class OpenSearchDatabase {
   private client: Client;
 
-  constructor(config?: ClientOptions) {
+  constructor(config: ClientOptions) {
     this.client = new Client({ ...config });
   }
 
